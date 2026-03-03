@@ -806,3 +806,404 @@ function renderTriggerList() {
 })();
 
 init();
+// ============================
+// Playground
+// ============================
+
+(function initPlayground() {
+  const playgroundBtn = document.getElementById('playgroundBtn');
+  const playgroundModal = document.getElementById('playgroundModal');
+  const playgroundClose = document.getElementById('playgroundClose');
+  const pgRunBtn = document.getElementById('pgRunBtn');
+  const pgClearBtn = document.getElementById('pgClearBtn');
+  const pgShareBtn = document.getElementById('pgShareBtn');
+  const pgHtml = document.getElementById('pgHtml');
+  const pgCss = document.getElementById('pgCss');
+  const pgJs = document.getElementById('pgJs');
+  const pgPreview = document.getElementById('pgPreview');
+  const deviceBtns = document.querySelectorAll('.pg-device-btn');
+
+  // ---- AI Panel elements ----
+  const pgAiToggle = document.getElementById('pgAiToggle');
+  const pgAiPanel = document.getElementById('pgAiPanel');
+  const pgAiMessages = document.getElementById('pgAiMessages');
+  const pgAiInput = document.getElementById('pgAiInput');
+  const pgAiSend = document.getElementById('pgAiSend');
+  const pgAiClearBtn = document.getElementById('pgAiClearBtn');
+
+  let pgAiOpen = false;
+  let pgAiHistory = []; // {role, content}
+  let pgAiStreaming = false;
+
+  const PG_AI_SYSTEM = `You are an expert web developer embedded in a live code playground.
+The user will describe websites, apps, or UI components they want to build.
+Your job is to generate complete, working HTML, CSS, and JavaScript.
+
+STRICT OUTPUT FORMAT — always respond with exactly this structure:
+
+[THOUGHT]
+One sentence describing what you're building.
+[/THOUGHT]
+
+[HTML]
+(complete HTML body content, no <html>/<head>/<body> tags)
+[/HTML]
+
+[CSS]
+(complete CSS)
+[/CSS]
+
+[JS]
+(complete JavaScript, or empty if none needed)
+[/JS]
+
+Rules:
+- Make it visually beautiful, modern, and polished by default.
+- Use CSS variables for theming when possible.
+- JavaScript must be self-contained, no imports.
+- Never include markdown fences. Output raw code only inside the tags.
+- If the user asks to modify existing code, they will provide it. Preserve what they want to keep, update what they ask to change.
+- Always output all three sections even if one is empty.`;
+
+  function toggleAiPanel() {
+    pgAiOpen = !pgAiOpen;
+    pgAiPanel.classList.toggle('open', pgAiOpen);
+    pgAiToggle.classList.toggle('active', pgAiOpen);
+    if (pgAiOpen) setTimeout(() => pgAiInput.focus(), 300);
+  }
+
+  pgAiToggle.addEventListener('click', toggleAiPanel);
+
+  // Clear AI conversation
+  pgAiClearBtn.addEventListener('click', () => {
+    pgAiHistory = [];
+    pgAiMessages.innerHTML = `<div class="pg-ai-welcome">
+      <div class="pg-ai-welcome-icon">✦</div>
+      <p>Describe the website you want to build and I'll generate the HTML, CSS, and JS for you.</p>
+      <div class="pg-ai-suggestions">
+        <button class="pg-ai-suggestion" data-prompt="Build a sleek landing page for a SaaS product with a hero section, features grid, and CTA button">Landing page</button>
+        <button class="pg-ai-suggestion" data-prompt="Create an interactive todo app with add, complete, and delete functionality, dark theme">Todo app</button>
+        <button class="pg-ai-suggestion" data-prompt="Build a personal portfolio page with animated sections, skills bars, and contact form">Portfolio</button>
+        <button class="pg-ai-suggestion" data-prompt="Create a CSS-only animated loading screen with particles and a progress bar">Loading screen</button>
+      </div>
+    </div>`;
+    bindSuggestions();
+  });
+
+  function bindSuggestions() {
+    pgAiMessages.querySelectorAll('.pg-ai-suggestion').forEach(btn => {
+      btn.addEventListener('click', () => {
+        pgAiInput.value = btn.dataset.prompt;
+        pgAiInput.dispatchEvent(new Event('input'));
+        sendAiMessage();
+      });
+    });
+  }
+  bindSuggestions();
+
+  // Input auto-resize and enable/disable send
+  pgAiInput.addEventListener('input', () => {
+    pgAiInput.style.height = 'auto';
+    pgAiInput.style.height = Math.min(pgAiInput.scrollHeight, 120) + 'px';
+    pgAiSend.disabled = !pgAiInput.value.trim() || pgAiStreaming;
+  });
+
+  pgAiInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (!pgAiSend.disabled) sendAiMessage();
+    }
+  });
+  pgAiSend.addEventListener('click', sendAiMessage);
+
+  function appendUserMsg(text) {
+    const el = document.createElement('div');
+    el.className = 'pg-msg pg-msg-user';
+    el.innerHTML = '<div class="pg-msg-role">You</div><div class="pg-msg-bubble">' + escapeHtml(text) + '</div>';
+    pgAiMessages.appendChild(el);
+    pgAiMessages.scrollTop = pgAiMessages.scrollHeight;
+  }
+
+  function appendTyping() {
+    const wrap = document.createElement('div');
+    wrap.className = 'pg-msg pg-msg-assistant';
+    wrap.innerHTML = '<div class="pg-msg-role">AI</div>';
+    const dot = document.createElement('div');
+    dot.className = 'pg-typing';
+    dot.innerHTML = '<span></span><span></span><span></span>';
+    wrap.appendChild(dot);
+    pgAiMessages.appendChild(wrap);
+    pgAiMessages.scrollTop = pgAiMessages.scrollHeight;
+    return { wrap, dot };
+  }
+
+  function parseAiBlocks(text) {
+    const get = (tag) => {
+      const m = text.match(new RegExp('\\[' + tag + '\\]([\\s\\S]*?)\\[\\/' + tag + '\\]', 'i'));
+      return m ? m[1].trim() : '';
+    };
+    const thought = get('THOUGHT');
+    const html = get('HTML');
+    const css = get('CSS');
+    const js = get('JS');
+    return { thought, html, css, js };
+  }
+
+  function applyToEditors(html, css, js) {
+    if (html !== undefined) pgHtml.value = html;
+    if (css !== undefined) pgCss.value = css;
+    if (js !== undefined) pgJs.value = js;
+    run();
+  }
+
+  async function sendAiMessage() {
+    const text = pgAiInput.value.trim();
+    if (!text || pgAiStreaming) return;
+    if (!state.apiKey) { showToast('No API key set', 'error'); return; }
+
+    // Hide welcome if present
+    const welcome = pgAiMessages.querySelector('.pg-ai-welcome');
+    if (welcome) welcome.remove();
+
+    appendUserMsg(text);
+    pgAiInput.value = '';
+    pgAiInput.style.height = 'auto';
+    pgAiSend.disabled = true;
+    pgAiStreaming = true;
+
+    // Build message history — include current editor state as context
+    const currentCode = pgHtml.value || pgCss.value || pgJs.value
+      ? '\n\nCurrent editor state:\n[HTML]\n' + pgHtml.value + '\n[/HTML]\n[CSS]\n' + pgCss.value + '\n[/CSS]\n[JS]\n' + pgJs.value + '\n[/JS]'
+      : '';
+
+    const userMsg = { role: 'user', content: text + currentCode };
+    pgAiHistory.push(userMsg);
+
+    const { wrap, dot } = appendTyping();
+
+    try {
+      const provider = PROVIDERS[state.provider];
+      let body;
+      if (state.provider === 'anthropic') {
+        body = { model: state.model, messages: pgAiHistory, max_tokens: 4096, system: PG_AI_SYSTEM };
+      } else {
+        body = { model: state.model, messages: [{ role: 'system', content: PG_AI_SYSTEM }, ...pgAiHistory], max_tokens: 4096 };
+      }
+
+      const res = await fetch(provider.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.apiKey },
+        body: JSON.stringify(body)
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error?.message || 'API error ' + res.status);
+      }
+
+      const data = await res.json();
+      const rawText = state.provider === 'anthropic'
+        ? (data.content?.[0]?.text || '')
+        : (data.choices?.[0]?.message?.content || '');
+
+      pgAiHistory.push({ role: 'assistant', content: rawText });
+
+      // Parse blocks
+      const { thought, html, css, js } = parseAiBlocks(rawText);
+
+      // Replace typing indicator with real response
+      dot.remove();
+      const bubble = document.createElement('div');
+      bubble.className = 'pg-msg-bubble';
+
+      const hasCode = html || css || js;
+      let innerHtml = thought ? '<p>' + escapeHtml(thought) + '</p>' : '';
+
+      if (hasCode) {
+        const badge = '<div class="pg-applied-badge" id="pgApplyBadge">✓ Code applied — click to re-apply</div>';
+        innerHtml += badge;
+      } else {
+        innerHtml += '<p>' + escapeHtml(rawText.replace(/\[[\w\/]+\]/g, '').trim().slice(0, 300)) + '</p>';
+      }
+
+      bubble.innerHTML = innerHtml;
+      wrap.appendChild(bubble);
+      pgAiMessages.scrollTop = pgAiMessages.scrollHeight;
+
+      // Auto-apply
+      if (hasCode) {
+        applyToEditors(html, css, js);
+        const badge = bubble.querySelector('#pgApplyBadge');
+        if (badge) {
+          badge.addEventListener('click', () => applyToEditors(html, css, js));
+        }
+      }
+
+    } catch (err) {
+      dot.remove();
+      const errBubble = document.createElement('div');
+      errBubble.className = 'pg-msg-bubble';
+      errBubble.style.color = '#ff5f5f';
+      errBubble.textContent = 'Error: ' + err.message;
+      wrap.appendChild(errBubble);
+      pgAiHistory.pop(); // remove failed user message
+    } finally {
+      pgAiStreaming = false;
+      pgAiSend.disabled = !pgAiInput.value.trim();
+    }
+  }
+
+  // ---- Open / Close ----
+  let autoRunTimer = null;
+
+  function openPlayground() {
+    playgroundModal.classList.add('open');
+    pgHtml.focus();
+  }
+
+  function closePlayground() {
+    playgroundModal.classList.remove('open');
+  }
+
+  playgroundBtn.onclick = openPlayground;
+  playgroundClose.onclick = closePlayground;
+  playgroundModal.addEventListener('click', e => { if (e.target === playgroundModal) closePlayground(); });
+
+  function run() {
+    const html = pgHtml.value;
+    const css = pgCss.value;
+    const js = pgJs.value;
+    const doc = '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>' + css + '</style></head><body>' + html + '<script>(function(){' + js + '})();<\/script></body></html>';
+    pgPreview.srcdoc = doc;
+  }
+
+  pgRunBtn.onclick = run;
+
+  function scheduleAutoRun() {
+    clearTimeout(autoRunTimer);
+    autoRunTimer = setTimeout(run, 800);
+  }
+  [pgHtml, pgCss, pgJs].forEach(ta => ta.addEventListener('input', scheduleAutoRun));
+
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && playgroundModal.classList.contains('open')) {
+      e.preventDefault(); run();
+    }
+    if (e.key === 'Escape' && playgroundModal.classList.contains('open')) {
+      closePlayground();
+    }
+  });
+
+  pgClearBtn.onclick = () => {
+    if (confirm('Clear all editors?')) {
+      pgHtml.value = ''; pgCss.value = ''; pgJs.value = ''; pgPreview.srcdoc = '';
+    }
+  };
+
+  pgShareBtn.onclick = () => {
+    const doc = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>' + pgCss.value + '</style></head><body>' + pgHtml.value + '<script>' + pgJs.value + '<\/script></body></html>';
+    const blob = new Blob([doc], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'playground.html'; a.click();
+    URL.revokeObjectURL(url);
+    showToast('Exported as playground.html');
+  };
+
+  deviceBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      deviceBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const w = btn.dataset.w;
+      const wrap = document.querySelector('.pg-preview-wrap');
+      pgPreview.style.width = w;
+      pgPreview.style.flex = w === '100%' ? '1' : '0 0 ' + w;
+      wrap.style.justifyContent = w === '100%' ? 'stretch' : 'center';
+      wrap.style.background = w === '100%' ? '#fff' : '#e8e8ec';
+    });
+  });
+
+  [pgHtml, pgCss, pgJs].forEach(ta => {
+    ta.addEventListener('keydown', e => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const s = ta.selectionStart, end = ta.selectionEnd;
+        ta.value = ta.value.substring(0, s) + '  ' + ta.value.substring(end);
+        ta.selectionStart = ta.selectionEnd = s + 2;
+      }
+    });
+  });
+
+  document.querySelectorAll('.pg-pane-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.pane;
+      const paneId = 'pg' + key.charAt(0).toUpperCase() + key.slice(1) + 'Pane';
+      const pane = document.getElementById(paneId);
+      const collapsed = pane.classList.toggle('collapsed');
+      btn.textContent = collapsed ? '+' : '-';
+    });
+  });
+
+  document.querySelectorAll('.pg-resizer').forEach(resizer => {
+    resizer.addEventListener('mousedown', e => {
+      e.preventDefault();
+      resizer.classList.add('dragging');
+      const startY = e.clientY;
+      const prev = resizer.previousElementSibling;
+      const next = resizer.nextElementSibling;
+      const startPrev = prev.getBoundingClientRect().height;
+      const startNext = next.getBoundingClientRect().height;
+
+      const onMove = ev => {
+        const dy = ev.clientY - startY;
+        const newPrev = Math.max(34, startPrev + dy);
+        const newNext = Math.max(34, (startPrev + startNext) - newPrev);
+        prev.style.flex = '0 0 ' + newPrev + 'px';
+        next.style.flex = '0 0 ' + newNext + 'px';
+      };
+      const onUp = () => {
+        resizer.classList.remove('dragging');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+
+  const pgEditors = document.querySelector('.pg-editors');
+  const pgPreviewCol = document.querySelector('.pg-preview-col');
+  const colResizer = document.createElement('div');
+  colResizer.className = 'pg-col-resizer';
+  pgEditors.parentElement.insertBefore(colResizer, pgPreviewCol);
+
+  colResizer.addEventListener('mousedown', e => {
+    e.preventDefault();
+    colResizer.classList.add('dragging');
+    const startX = e.clientX;
+    const startW = pgEditors.getBoundingClientRect().width;
+    const parentW = pgEditors.parentElement.getBoundingClientRect().width;
+
+    const onMove = ev => {
+      const newW = Math.min(Math.max(200, startW + (ev.clientX - startX)), parentW - 200);
+      pgEditors.style.cssText = 'width:' + newW + 'px;min-width:' + newW + 'px;max-width:' + newW + 'px';
+    };
+    const onUp = () => {
+      colResizer.classList.remove('dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  window.openPlaygroundWith = function(opts) {
+    opts = opts || {};
+    if (opts.html) pgHtml.value = opts.html;
+    if (opts.css) pgCss.value = opts.css;
+    if (opts.js) pgJs.value = opts.js;
+    openPlayground();
+    run();
+  };
+
+})();
