@@ -83,17 +83,6 @@ const escapeHtml = (str) => {
 // ============================
 // AI Tool Commands
 // ============================
-// The AI can embed commands in its response using the syntax:
-//   <tool:command_name arg1 arg2 ...>optional body</tool>
-//
-// Supported commands:
-//   <tool:create_file filename.txt>file content here</tool>
-//   <tool:open_url https://example.com></tool>
-//   <tool:alert message text here></tool>
-//   <tool:set_title New Chat Title></tool>
-//
-// Commands are stripped from the visible response and executed silently,
-// then the AI gets a follow-up "tool result" message injected into the chat.
 
 const AI_TOOLS = {
 
@@ -131,14 +120,8 @@ const AI_TOOLS = {
 
 };
 
-/**
- * Parse and execute all <tool:...> commands found in an AI response.
- * Returns { cleanText, toolResults } where cleanText has the tags stripped
- * and toolResults is an array of result strings.
- */
 function processAiTools(text) {
   const toolResults = [];
-  // Match <tool:name args>body</tool> — body is optional
   const cleanText = text.replace(/<tool:(\w+)([^>]*)>([\s\S]*?)<\/tool>/gi, (_, name, argsStr, body) => {
     const args = argsStr.trim().split(/\s+/).filter(Boolean);
     const fn = AI_TOOLS[name.toLowerCase()];
@@ -152,10 +135,9 @@ function processAiTools(text) {
     } catch(e) {
       toolResults.push({ ok: false, name, msg: `Tool \`${name}\` threw: ${e.message}` });
     }
-    return ''; // strip from visible text
+    return '';
   });
 
-  // Also support single-line shorthand: @@create_file banana.txt This is the content
   const cleanText2 = cleanText.replace(/^@@(\w+)\s+(.*)$/gm, (_, name, rest) => {
     const fn = AI_TOOLS[name.toLowerCase()];
     if (!fn) {
@@ -163,14 +145,13 @@ function processAiTools(text) {
       return '';
     }
     try {
-      // For shorthand, first word = first arg (e.g. filename), rest = body
       const parts = rest.split(/\s+/);
       const args = [parts[0]];
       const body = parts.slice(1).join(' ');
       const result = fn(args, body);
       toolResults.push({ name, ...result });
     } catch(e) {
-      toolResults.push({ ok: false, name, name, msg: `Tool \`${name}\` threw: ${e.message}` });
+      toolResults.push({ ok: false, name, msg: `Tool \`${name}\` threw: ${e.message}` });
     }
     return '';
   });
@@ -178,9 +159,6 @@ function processAiTools(text) {
   return { cleanText: cleanText2.trim(), toolResults };
 }
 
-/**
- * Build a tool-result feedback message to inject into the chat as a system notice.
- */
 function buildToolFeedbackMessage(toolResults) {
   if (!toolResults.length) return null;
   const lines = toolResults.map(r => {
@@ -229,6 +207,11 @@ Only use tools when the user explicitly asks for file creation, opening URLs, et
   chats: JSON.parse(localStorage.getItem('nc_chats') || '[]'),
   activeChatId: null,
   streaming: false,
+
+  // ── New feature flags ──
+  deepThink: false,   // prepend step-by-step reasoning instruction
+  webSearch: false,   // fetch search context before sending
+  attachedFiles: [],  // [{ name, content, type }]
 };
 
 // ============================
@@ -261,6 +244,312 @@ const triggerListEl = $('triggerList');
 const addTriggerBtn = $('addTriggerBtn');
 
 // ============================
+// ── FEATURE: Web Search (from scratch, no provider tools) ──
+// Uses DuckDuckGo Instant Answer API + corsproxy for CORS
+// ============================
+
+// ── Web search using sources with native CORS headers (no proxy needed) ──
+// 1. DuckDuckGo Instant Answer API — has Access-Control-Allow-Origin: *
+// 2. Wikipedia Search + Summary API — has Access-Control-Allow-Origin: *
+// Both are called in parallel; results are merged.
+
+async function fetchWebSearchContext(query) {
+  const results = await Promise.allSettled([
+    fetchDDGAnswer(query),
+    fetchWikipediaSummary(query),
+  ]);
+
+  const snippets = [];
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value) snippets.push(r.value);
+  }
+
+  if (!snippets.length) {
+    console.warn('Web search: no results from any source');
+    return null;
+  }
+
+  return `[Web search results for: "${query}"]\n\n${snippets.join('\n\n')}\n[End of search results]`;
+}
+
+async function fetchDDGAnswer(query) {
+  try {
+    // DDG Instant Answer API ships with Access-Control-Allow-Origin: * on the
+    // callback=? (JSONP) endpoint — we use the bare JSON endpoint which also works
+    // in modern browsers when called with a trailing &callback= trick via &format=json
+    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1&no_redirect=1`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+
+    const parts = [];
+    if (data.Answer)   parts.push(`**Instant answer:** ${data.Answer}`);
+    if (data.Abstract) parts.push(`**Summary:** ${data.Abstract}${data.AbstractURL ? ` — [source](${data.AbstractURL})` : ''}`);
+
+    const topics = (data.RelatedTopics || [])
+      .filter(t => t.Text && !t.Topics) // skip category groupings
+      .slice(0, 4)
+      .map(t => `- ${t.Text}`);
+    if (topics.length) parts.push(`**Related topics:**\n${topics.join('\n')}`);
+
+    return parts.length ? `### DuckDuckGo\n${parts.join('\n\n')}` : null;
+  } catch (e) {
+    console.warn('DDG search failed:', e.message);
+    return null;
+  }
+}
+
+async function fetchWikipediaSummary(query) {
+  try {
+    // Step 1: search for the best matching article title
+    const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=1&format=json&origin=*`;
+    const searchRes = await fetch(searchUrl, { signal: AbortSignal.timeout(5000) });
+    if (!searchRes.ok) return null;
+    const searchData = await searchRes.json();
+    const title = searchData?.query?.search?.[0]?.title;
+    if (!title) return null;
+
+    // Step 2: fetch the plain-text summary of that article
+    const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
+    const summaryRes = await fetch(summaryUrl, { signal: AbortSignal.timeout(5000) });
+    if (!summaryRes.ok) return null;
+    const summaryData = await summaryRes.json();
+    const extract = summaryData?.extract;
+    if (!extract) return null;
+
+    // Trim to ~600 chars so we don't blow the context
+    const short = extract.length > 600 ? extract.slice(0, 600) + '…' : extract;
+    return `### Wikipedia — ${title}\n${short}\n[Read more](${summaryData.content_urls?.desktop?.page || ''})`;
+  } catch (e) {
+    console.warn('Wikipedia search failed:', e.message);
+    return null;
+  }
+}
+
+// ============================
+// ── FEATURE: File Upload (from scratch, FileReader) ──
+// ============================
+
+function injectFileUploadUI() {
+  // Create hidden file input
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.id = 'fileUploadInput';
+  fileInput.multiple = true;
+  fileInput.accept = '.txt,.md,.js,.ts,.py,.json,.csv,.html,.css,.xml,.yaml,.yml,.pdf,.png,.jpg,.jpeg,.gif,.webp';
+  fileInput.style.display = 'none';
+  document.body.appendChild(fileInput);
+
+  // Attach button (paperclip)
+  const attachBtn = document.createElement('button');
+  attachBtn.id = 'attachBtn';
+  attachBtn.className = 'input-feature-btn';
+  attachBtn.title = 'Attach files';
+  attachBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>`;
+
+  // Deep Think button
+  const deepThinkBtn = document.createElement('button');
+  deepThinkBtn.id = 'deepThinkBtn';
+  deepThinkBtn.className = 'input-feature-btn';
+  deepThinkBtn.title = 'Deep Think — makes the AI reason step-by-step';
+  deepThinkBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>`;
+
+  // Web Search button
+  const webSearchBtn = document.createElement('button');
+  webSearchBtn.id = 'webSearchBtn';
+  webSearchBtn.className = 'input-feature-btn';
+  webSearchBtn.title = 'Web Search — fetch live context before answering';
+  webSearchBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
+
+  // File preview bar
+  const filePreviewBar = document.createElement('div');
+  filePreviewBar.id = 'filePreviewBar';
+  filePreviewBar.className = 'file-preview-bar';
+  filePreviewBar.style.display = 'none';
+
+  // Inject buttons before send button
+  const inputWrapper = sendBtn.parentElement;
+  inputWrapper.insertBefore(attachBtn, sendBtn);
+  inputWrapper.insertBefore(deepThinkBtn, sendBtn);
+  inputWrapper.insertBefore(webSearchBtn, sendBtn);
+
+  // Insert file preview bar above input area
+  const inputArea = document.querySelector('.input-area') || inputWrapper.parentElement;
+  inputArea.insertBefore(filePreviewBar, inputArea.firstChild);
+
+  // ── Event: attach button ──
+  attachBtn.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', async () => {
+    const files = Array.from(fileInput.files);
+    if (!files.length) return;
+    for (const file of files) {
+      await readAndAttachFile(file);
+    }
+    fileInput.value = ''; // reset so same file can be re-added
+    renderFilePreviewBar();
+  });
+
+  // ── Event: deep think toggle ──
+  deepThinkBtn.addEventListener('click', () => {
+    state.deepThink = !state.deepThink;
+    deepThinkBtn.classList.toggle('active', state.deepThink);
+    deepThinkBtn.title = state.deepThink ? 'Deep Think ON' : 'Deep Think — makes the AI reason step-by-step';
+    showToast(state.deepThink ? '🧠 Deep Think enabled' : '🧠 Deep Think disabled');
+  });
+
+  // ── Event: web search toggle ──
+  webSearchBtn.addEventListener('click', () => {
+    state.webSearch = !state.webSearch;
+    webSearchBtn.classList.toggle('active', state.webSearch);
+    webSearchBtn.title = state.webSearch ? 'Web Search ON' : 'Web Search — fetch live context before answering';
+    showToast(state.webSearch ? '🔎 Web Search enabled' : '🔎 Web Search disabled');
+  });
+
+  // Inject styles
+  injectFeatureStyles();
+}
+
+async function readAndAttachFile(file) {
+  return new Promise((resolve) => {
+    const isImage = file.type.startsWith('image/');
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      if (isImage) {
+        state.attachedFiles.push({
+          name: file.name,
+          type: file.type,
+          content: e.target.result, // data URL
+          isImage: true,
+        });
+      } else {
+        state.attachedFiles.push({
+          name: file.name,
+          type: file.type || 'text/plain',
+          content: e.target.result,
+          isImage: false,
+        });
+      }
+      resolve();
+    };
+
+    reader.onerror = () => {
+      showToast(`Failed to read ${file.name}`, 'error');
+      resolve();
+    };
+
+    if (isImage) {
+      reader.readAsDataURL(file);
+    } else {
+      reader.readAsText(file);
+    }
+  });
+}
+
+function renderFilePreviewBar() {
+  const bar = $('filePreviewBar');
+  if (!bar) return;
+  if (!state.attachedFiles.length) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+  bar.style.display = 'flex';
+  bar.innerHTML = '';
+  state.attachedFiles.forEach((f, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'file-chip';
+    const icon = f.isImage ? '🖼️' : getFileIcon(f.name);
+    chip.innerHTML = `<span class="file-chip-icon">${icon}</span><span class="file-chip-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name.length > 20 ? f.name.slice(0,18)+'…' : f.name)}</span><button class="file-chip-remove" data-i="${i}" title="Remove">×</button>`;
+    chip.querySelector('.file-chip-remove').addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.attachedFiles.splice(i, 1);
+      renderFilePreviewBar();
+    });
+    bar.appendChild(chip);
+  });
+}
+
+function getFileIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  const map = { js:'📜', ts:'📜', py:'🐍', json:'📋', csv:'📊', html:'🌐', css:'🎨', md:'📝', txt:'📄', pdf:'📕', xml:'📋', yaml:'📋', yml:'📋' };
+  return map[ext] || '📎';
+}
+
+// Max chars of text file content to send (prevent token limit 400s)
+const MAX_FILE_CHARS = 40000;
+
+// Build the text-only file context string (for non-image files)
+function buildFileContext(filesSnapshot) {
+  const files = filesSnapshot || state.attachedFiles;
+  const textFiles = files.filter(f => !f.isImage);
+  if (!textFiles.length) return '';
+  const parts = textFiles.map(f => {
+    // Sanitize: strip null bytes and truncate
+    let content = f.content.replace(/\0/g, '').replace(/\r\n/g, '\n');
+    const truncated = content.length > MAX_FILE_CHARS;
+    if (truncated) content = content.slice(0, MAX_FILE_CHARS) + `\n\n[...truncated at ${MAX_FILE_CHARS} chars]`;
+    return `--- File: ${f.name} ---\n${content}\n--- End of ${f.name} ---`;
+  });
+  return '\n\n[Attached files:]\n' + parts.join('\n\n');
+}
+
+// Build content blocks array for the API (handles images properly per provider)
+function buildContentBlocks(textContent, filesSnapshot, provider) {
+  const files = filesSnapshot || [];
+  const imageFiles = files.filter(f => f.isImage);
+
+  // No images — just return plain string (compatible with all providers)
+  if (!imageFiles.length) return textContent;
+
+  // With images — build a content array
+  const blocks = [];
+
+  if (provider === 'anthropic') {
+    imageFiles.forEach(f => {
+      const mediaType = f.type || 'image/jpeg';
+      // data URL format: "data:image/jpeg;base64,<data>"
+      const base64 = f.content.split(',')[1] || f.content;
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } });
+    });
+    blocks.push({ type: 'text', text: textContent });
+  } else {
+    // OpenAI-compatible format (works for OpenAI, Cerebras vision models, etc.)
+    const contentArr = [];
+    imageFiles.forEach(f => {
+      contentArr.push({ type: 'image_url', image_url: { url: f.content } });
+    });
+    contentArr.push({ type: 'text', text: textContent });
+    return contentArr;
+  }
+
+  return blocks;
+}
+
+// ============================
+// ── FEATURE: Deep Think ──
+// Wraps the system prompt with explicit chain-of-thought instructions
+// Works on any model/provider without special API support
+// ============================
+
+const DEEP_THINK_PREFIX = `Before answering, reason through this step-by-step inside a <thinking> block:
+<thinking>
+1. What is the user really asking?
+2. What do I know that's relevant?
+3. What are the edge cases or nuances?
+4. What is the best approach?
+</thinking>
+Then give your final answer after the thinking block. Be thorough and accurate.
+
+`;
+
+function buildSystemPrompt() {
+  const base = state.systemPrompt;
+  return state.deepThink ? DEEP_THINK_PREFIX + base : base;
+}
+
+// ============================
 // Init
 // ============================
 
@@ -270,6 +559,7 @@ function init() {
   setupEventListeners();
   updateModelLabel();
   if (!state.apiKey) promptForKey();
+  injectFileUploadUI();
 }
 
 function promptForKey() {
@@ -305,7 +595,6 @@ function loadChat(id) {
     welcomeEl.style.display = 'none';
     messagesEl.style.display = 'flex';
     chat.messages.forEach(msg => {
-      // Tool-feedback messages are stored with role 'tool-feedback'
       if (msg.role === 'tool-feedback') {
         renderToolFeedback(msg.content);
       } else {
@@ -361,26 +650,62 @@ async function sendMessage(content) {
 
   welcomeEl.style.display = 'none'; messagesEl.style.display = 'flex';
 
-  chat.messages.push({ role: 'user', content }); await renderMessageAsync('user', content); updateChatTitle(chat, content); saveChats();
+  // ── Capture attached files before clearing ──
+  const filesSnapshot = [...state.attachedFiles];
+  const fileContext = buildFileContext(filesSnapshot);
+  state.attachedFiles = [];
+  renderFilePreviewBar();
+
+  // ── Compose the full user content for display (no injected context) ──
+  const displayContent = filesSnapshot.length
+    ? content + '\n\n' + filesSnapshot.map(f => f.isImage ? `📎 ${f.name}` : `📎 ${f.name}`).join('\n')
+    : content;
+
+  chat.messages.push({ role: 'user', content: displayContent });
+  await renderMessageAsync('user', displayContent);
+  updateChatTitle(chat, content);
+  saveChats();
   inputEl.value = ''; autoResize(); sendBtn.disabled = true;
-  const typingEl = showTyping(); state.streaming = true;
+
+  const typingEl = showTyping();
+  state.streaming = true;
 
   try {
-    // Only pass actual user/assistant messages to the API (not tool-feedback entries)
-    const apiMessages = chat.messages.filter(m => m.role === 'user' || m.role === 'assistant');
-    const rawText = await callProvider(apiMessages);
+    // ── Web Search: fetch context before calling AI ──
+    let searchContext = '';
+    if (state.webSearch) {
+      typingEl.querySelector('.bubble').textContent = '🔎 Searching the web…';
+      searchContext = await fetchWebSearchContext(content) || '';
+      if (!searchContext) showToast('🔎 Web search returned no results', 'error');
+      typingEl.querySelector('.bubble').textContent = 'Typing…';
+    }
+
+    // ── Build the enriched user message for the API ──
+    // We add file content + search results as extra context, but only for this turn
+    let apiUserContent = content;
+    if (searchContext) apiUserContent += '\n\n' + searchContext;
+    if (fileContext) apiUserContent += fileContext;
+
+    // ── Build API messages: replace last user message with enriched one ──
+    const historyMessages = chat.messages
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .slice(0, -1); // everything except the message we just pushed
+
+    const apiMessages = [
+      ...historyMessages,
+      { role: 'user', content: apiUserContent }
+    ];
+
+    const rawText = await callProvider(apiMessages, filesSnapshot);
     typingEl.remove();
 
-    // Process tool commands embedded in the response
     const { cleanText, toolResults } = processAiTools(rawText);
-
-    // Store and render the cleaned AI response
     const displayText = cleanText || rawText;
+
     chat.messages.push({ role: 'assistant', content: displayText });
     saveChats();
     await renderMessageAsync('assistant', displayText);
 
-    // If any tools fired, inject a feedback message
     if (toolResults.length) {
       const feedbackText = buildToolFeedbackMessage(toolResults);
       chat.messages.push({ role: 'tool-feedback', content: feedbackText });
@@ -388,8 +713,24 @@ async function sendMessage(content) {
       await renderToolFeedbackAsync(feedbackText);
     }
 
+    // Inject search context notice if search was used
+    if (searchContext) {
+      const notice = `🔎 **Web search was used** to augment this response.`;
+      chat.messages.push({ role: 'tool-feedback', content: notice });
+      saveChats();
+      await renderToolFeedbackAsync(notice);
+    }
+
+    // Inject deep think notice if enabled
+    if (state.deepThink) {
+      const notice = `🧠 **Deep Think mode was active** for this response.`;
+      chat.messages.push({ role: 'tool-feedback', content: notice });
+      saveChats();
+      await renderToolFeedbackAsync(notice);
+    }
+
   } catch (err) {
-    typingEl.remove(); renderError(err.message || 'All providers failed.');
+    typingEl.remove(); renderError(err.message || 'Request failed.');
   } finally {
     state.streaming = false;
     sendBtn.disabled = !inputEl.value.trim();
@@ -400,17 +741,31 @@ async function sendMessage(content) {
 // Provider Calls
 // ============================
 
-async function callProvider(messages) {
+async function callProvider(messages, filesSnapshot) {
   const provider = PROVIDERS[state.provider]; if (!provider) throw new Error("Invalid provider");
+
+  const systemPrompt = buildSystemPrompt();
+
+  // Build the last user message with proper content blocks if images are attached
+  const hasImages = (filesSnapshot || []).some(f => f.isImage);
+  let apiMessages = messages;
+
+  if (hasImages) {
+    // Re-build the last user message as a content array
+    apiMessages = messages.slice(0, -1);
+    const lastMsg = messages[messages.length - 1];
+    const contentBlocks = buildContentBlocks(lastMsg.content, filesSnapshot, state.provider);
+    apiMessages = [...apiMessages, { role: 'user', content: contentBlocks }];
+  }
 
   let body;
   if (state.provider === 'anthropic') {
-    body = { model: state.model, messages, max_tokens: 4096, temperature: 0.7 };
-    if (state.systemPrompt) body.system = state.systemPrompt;
+    body = { model: state.model, messages: apiMessages, max_tokens: 4096, temperature: 0.7 };
+    if (systemPrompt) body.system = systemPrompt;
   } else {
-    const msgs = state.systemPrompt
-      ? [{ role: 'system', content: state.systemPrompt }, ...messages]
-      : messages;
+    const msgs = systemPrompt
+      ? [{ role: 'system', content: systemPrompt }, ...apiMessages]
+      : apiMessages;
     body = { model: state.model, messages: msgs, temperature: 0.7 };
   }
 
@@ -447,7 +802,6 @@ function renderMessage(role, content) {
   scrollToBottom(true);
 }
 
-/** Render a tool-feedback card (static, no animation needed on history reload) */
 function renderToolFeedback(content) {
   const el = document.createElement('div');
   el.className = 'message tool-feedback';
@@ -460,11 +814,9 @@ function renderToolFeedback(content) {
   scrollToBottom(true);
 }
 
-/** Animated version used after live AI response */
 async function renderToolFeedbackAsync(content) {
   const el = document.createElement('div');
   el.className = 'message tool-feedback';
-  // Start collapsed/faded
   el.style.opacity = '0';
   el.style.transform = 'translateY(6px)';
   el.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
@@ -475,7 +827,6 @@ async function renderToolFeedbackAsync(content) {
     </div>`;
   messagesEl.appendChild(el);
   scrollToBottom(true);
-  // Trigger animation
   await new Promise(r => setTimeout(r, 30));
   el.style.opacity = '1';
   el.style.transform = 'translateY(0)';
@@ -519,18 +870,15 @@ function checkTriggers(text) {
 
     if (!matched) return;
 
-    // Run the JS action
     let actionResult = null;
     let actionError = null;
     try {
-      // eslint-disable-next-line no-new-func
       actionResult = new Function('response', 'match', trigger.action)(text, matchResult);
     } catch(e) {
       actionError = e.message;
       showToast(`Trigger #${idx+1} JS error: ${e.message}`, 'error');
     }
 
-    // Build a feedback message and inject it into the chat
     const feedbackLines = [];
     feedbackLines.push(`⚡ **Trigger fired** — matched \`${escapeHtml(trigger.match)}\``);
     if (trigger.type === 'regex' && matchResult) {
@@ -543,7 +891,6 @@ function checkTriggers(text) {
     }
     const feedbackText = feedbackLines.join('\n\n');
 
-    // Inject into chat history and render
     const chat = getActiveChat();
     if (chat) {
       chat.messages.push({ role: 'tool-feedback', content: feedbackText });
@@ -768,7 +1115,108 @@ function renderTriggerList() {
 }
 
 // ============================
-// CSS for tool-feedback bubbles (injected once)
+// Injected styles for new features
+// ============================
+
+function injectFeatureStyles() {
+  if (document.getElementById('feature-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'feature-styles';
+  style.textContent = `
+    /* ── Feature toggle buttons ── */
+    .input-feature-btn {
+      background: none;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      color: var(--text-muted, #888);
+      cursor: pointer;
+      padding: 6px 7px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s, background 0.15s, border-color 0.15s;
+      flex-shrink: 0;
+    }
+    .input-feature-btn:hover {
+      color: var(--text, #eee);
+      background: rgba(255,255,255,0.06);
+    }
+    .input-feature-btn.active {
+      color: #7eb8f7;
+      border-color: #7eb8f7;
+      background: rgba(126,184,247,0.1);
+    }
+
+    /* ── File preview bar ── */
+    .file-preview-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 6px 10px 2px;
+    }
+    .file-chip {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(126,184,247,0.12);
+      border: 1px solid rgba(126,184,247,0.3);
+      border-radius: 20px;
+      padding: 3px 8px 3px 7px;
+      font-size: 12px;
+      color: #aac4e0;
+      max-width: 220px;
+    }
+    .file-chip-icon { font-size: 13px; flex-shrink: 0; }
+    .file-chip-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 140px;
+    }
+    .file-chip-remove {
+      background: none;
+      border: none;
+      color: #7eb8f7;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0;
+      line-height: 1;
+      flex-shrink: 0;
+      opacity: 0.7;
+    }
+    .file-chip-remove:hover { opacity: 1; }
+
+    /* ── Tool feedback bubbles ── */
+    .message.tool-feedback .tool-fb-avatar {
+      background: linear-gradient(135deg, #2a2a3a, #3a3a50);
+      border: 1px solid #555;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .message.tool-feedback .tool-fb-bubble {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      border: 1px solid #334;
+      color: #aac4e0;
+      font-size: 13px;
+      border-radius: 8px;
+      padding: 10px 14px;
+    }
+    .message.tool-feedback .tool-fb-bubble strong { color: #7eb8f7; }
+    .message.tool-feedback .tool-fb-bubble code {
+      background: #0d1117;
+      color: #79c0ff;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+// ============================
+// CSS for tool-feedback bubbles (legacy injected once)
 // ============================
 (function injectToolFeedbackStyles() {
   if (document.getElementById('tool-feedback-styles')) return;
@@ -791,9 +1239,7 @@ function renderTriggerList() {
       border-radius: 8px;
       padding: 10px 14px;
     }
-    .message.tool-feedback .tool-fb-bubble strong {
-      color: #7eb8f7;
-    }
+    .message.tool-feedback .tool-fb-bubble strong { color: #7eb8f7; }
     .message.tool-feedback .tool-fb-bubble code {
       background: #0d1117;
       color: #79c0ff;
@@ -806,6 +1252,7 @@ function renderTriggerList() {
 })();
 
 init();
+
 // ============================
 // Playground
 // ============================
@@ -823,7 +1270,6 @@ init();
   const pgPreview = document.getElementById('pgPreview');
   const deviceBtns = document.querySelectorAll('.pg-device-btn');
 
-  // ---- AI Panel elements ----
   const pgAiToggle = document.getElementById('pgAiToggle');
   const pgAiPanel = document.getElementById('pgAiPanel');
   const pgAiMessages = document.getElementById('pgAiMessages');
@@ -832,7 +1278,7 @@ init();
   const pgAiClearBtn = document.getElementById('pgAiClearBtn');
 
   let pgAiOpen = false;
-  let pgAiHistory = []; // {role, content}
+  let pgAiHistory = [];
   let pgAiStreaming = false;
 
   const PG_AI_SYSTEM = `You are an expert web developer embedded in a live code playground.
@@ -874,7 +1320,6 @@ Rules:
 
   pgAiToggle.addEventListener('click', toggleAiPanel);
 
-  // Clear AI conversation
   pgAiClearBtn.addEventListener('click', () => {
     pgAiHistory = [];
     pgAiMessages.innerHTML = `<div class="pg-ai-welcome">
@@ -901,7 +1346,6 @@ Rules:
   }
   bindSuggestions();
 
-  // Input auto-resize and enable/disable send
   pgAiInput.addEventListener('input', () => {
     pgAiInput.style.height = 'auto';
     pgAiInput.style.height = Math.min(pgAiInput.scrollHeight, 120) + 'px';
@@ -942,11 +1386,7 @@ Rules:
       const m = text.match(new RegExp('\\[' + tag + '\\]([\\s\\S]*?)\\[\\/' + tag + '\\]', 'i'));
       return m ? m[1].trim() : '';
     };
-    const thought = get('THOUGHT');
-    const html = get('HTML');
-    const css = get('CSS');
-    const js = get('JS');
-    return { thought, html, css, js };
+    return { thought: get('THOUGHT'), html: get('HTML'), css: get('CSS'), js: get('JS') };
   }
 
   function applyToEditors(html, css, js) {
@@ -961,7 +1401,6 @@ Rules:
     if (!text || pgAiStreaming) return;
     if (!state.apiKey) { showToast('No API key set', 'error'); return; }
 
-    // Hide welcome if present
     const welcome = pgAiMessages.querySelector('.pg-ai-welcome');
     if (welcome) welcome.remove();
 
@@ -971,7 +1410,6 @@ Rules:
     pgAiSend.disabled = true;
     pgAiStreaming = true;
 
-    // Build message history — include current editor state as context
     const currentCode = pgHtml.value || pgCss.value || pgJs.value
       ? '\n\nCurrent editor state:\n[HTML]\n' + pgHtml.value + '\n[/HTML]\n[CSS]\n' + pgCss.value + '\n[/CSS]\n[JS]\n' + pgJs.value + '\n[/JS]'
       : '';
@@ -1008,10 +1446,8 @@ Rules:
 
       pgAiHistory.push({ role: 'assistant', content: rawText });
 
-      // Parse blocks
       const { thought, html, css, js } = parseAiBlocks(rawText);
 
-      // Replace typing indicator with real response
       dot.remove();
       const bubble = document.createElement('div');
       bubble.className = 'pg-msg-bubble';
@@ -1020,8 +1456,7 @@ Rules:
       let innerHtml = thought ? '<p>' + escapeHtml(thought) + '</p>' : '';
 
       if (hasCode) {
-        const badge = '<div class="pg-applied-badge" id="pgApplyBadge">✓ Code applied — click to re-apply</div>';
-        innerHtml += badge;
+        innerHtml += '<div class="pg-applied-badge" id="pgApplyBadge">✓ Code applied — click to re-apply</div>';
       } else {
         innerHtml += '<p>' + escapeHtml(rawText.replace(/\[[\w\/]+\]/g, '').trim().slice(0, 300)) + '</p>';
       }
@@ -1030,13 +1465,10 @@ Rules:
       wrap.appendChild(bubble);
       pgAiMessages.scrollTop = pgAiMessages.scrollHeight;
 
-      // Auto-apply
       if (hasCode) {
         applyToEditors(html, css, js);
         const badge = bubble.querySelector('#pgApplyBadge');
-        if (badge) {
-          badge.addEventListener('click', () => applyToEditors(html, css, js));
-        }
+        if (badge) badge.addEventListener('click', () => applyToEditors(html, css, js));
       }
 
     } catch (err) {
@@ -1046,66 +1478,46 @@ Rules:
       errBubble.style.color = '#ff5f5f';
       errBubble.textContent = 'Error: ' + err.message;
       wrap.appendChild(errBubble);
-      pgAiHistory.pop(); // remove failed user message
+      pgAiHistory.pop();
     } finally {
       pgAiStreaming = false;
       pgAiSend.disabled = !pgAiInput.value.trim();
     }
   }
 
-  // ---- Open / Close ----
   let autoRunTimer = null;
 
-  function openPlayground() {
-    playgroundModal.classList.add('open');
-    pgHtml.focus();
-  }
-
-  function closePlayground() {
-    playgroundModal.classList.remove('open');
-  }
+  function openPlayground() { playgroundModal.classList.add('open'); pgHtml.focus(); }
+  function closePlayground() { playgroundModal.classList.remove('open'); }
 
   playgroundBtn.onclick = openPlayground;
   playgroundClose.onclick = closePlayground;
   playgroundModal.addEventListener('click', e => { if (e.target === playgroundModal) closePlayground(); });
 
   function run() {
-    const html = pgHtml.value;
-    const css = pgCss.value;
-    const js = pgJs.value;
-    const doc = '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>' + css + '</style></head><body>' + html + '<script>(function(){' + js + '})();<\/script></body></html>';
+    const doc = '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>' + pgCss.value + '</style></head><body>' + pgHtml.value + '<script>(function(){' + pgJs.value + '})();<\/script></body></html>';
     pgPreview.srcdoc = doc;
   }
 
   pgRunBtn.onclick = run;
 
-  function scheduleAutoRun() {
-    clearTimeout(autoRunTimer);
-    autoRunTimer = setTimeout(run, 800);
-  }
+  function scheduleAutoRun() { clearTimeout(autoRunTimer); autoRunTimer = setTimeout(run, 800); }
   [pgHtml, pgCss, pgJs].forEach(ta => ta.addEventListener('input', scheduleAutoRun));
 
   document.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && playgroundModal.classList.contains('open')) {
-      e.preventDefault(); run();
-    }
-    if (e.key === 'Escape' && playgroundModal.classList.contains('open')) {
-      closePlayground();
-    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && playgroundModal.classList.contains('open')) { e.preventDefault(); run(); }
+    if (e.key === 'Escape' && playgroundModal.classList.contains('open')) closePlayground();
   });
 
   pgClearBtn.onclick = () => {
-    if (confirm('Clear all editors?')) {
-      pgHtml.value = ''; pgCss.value = ''; pgJs.value = ''; pgPreview.srcdoc = '';
-    }
+    if (confirm('Clear all editors?')) { pgHtml.value = ''; pgCss.value = ''; pgJs.value = ''; pgPreview.srcdoc = ''; }
   };
 
   pgShareBtn.onclick = () => {
     const doc = '<!DOCTYPE html><html><head><meta charset="UTF-8"><style>' + pgCss.value + '</style></head><body>' + pgHtml.value + '<script>' + pgJs.value + '<\/script></body></html>';
     const blob = new Blob([doc], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'playground.html'; a.click();
+    const a = document.createElement('a'); a.href = url; a.download = 'playground.html'; a.click();
     URL.revokeObjectURL(url);
     showToast('Exported as playground.html');
   };
