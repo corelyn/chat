@@ -173,34 +173,6 @@ function buildToolFeedbackMessage(toolResults) {
 // Providers
 // ============================
 
-// Minimal JS fetch example
-// async function getAIResponse(prompt) {
-//   try {
-//     const res = await fetch("https://corelyncloud-backend.onrender.com/chat/completions", {
-//       method: "POST",
-//       headers: { "Content-Type": "application/json" },
-//       body: JSON.stringify({
-//         apiKey: "YOUR_API_KEY",
-//         model: "nvidia/moonshotai/kimi-k2.5",      // When you replace models replace this
-//         prompt: prompt
-//       })
-//     });
-//     const data = await res.json();
-//     // Log AI response
-//     console.log("AI Response:", data);
-//     // Return just the text if available
-//     return data.choices?.[0]?.message?.content || data.text || data;
-//
-//   } catch (err) {
-//     console.error("Error fetching AI response:", err);
-//     return null;
-//   }
-// }
-// // Example usage
-// getAIResponse("Write a short haiku about AI").then(response => {
-//   console.log("Final Response:", response);
-// });
-
 const PROVIDERS = {
   anthropic: { name: 'Anthropic', endpoint: 'https://api.anthropic.com/v1/messages' },
   openai: { name: 'OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions' },
@@ -238,9 +210,9 @@ Only use tools when the user explicitly asks for file creation, opening URLs, et
   streaming: false,
 
   // ── New feature flags ──
-  deepThink: false,   // prepend step-by-step reasoning instruction
-  webSearch: false,   // fetch search context before sending
-  attachedFiles: [],  // [{ name, content, type }]
+  deepThink: false,
+  webSearch: false,
+  attachedFiles: [],
 };
 
 // ============================
@@ -273,14 +245,8 @@ const triggerListEl = $('triggerList');
 const addTriggerBtn = $('addTriggerBtn');
 
 // ============================
-// ── FEATURE: Web Search (from scratch, no provider tools) ──
-// Uses DuckDuckGo Instant Answer API + corsproxy for CORS
+// ── FEATURE: Web Search ──
 // ============================
-
-// ── Web search using sources with native CORS headers (no proxy needed) ──
-// 1. DuckDuckGo Instant Answer API — has Access-Control-Allow-Origin: *
-// 2. Wikipedia Search + Summary API — has Access-Control-Allow-Origin: *
-// Both are called in parallel; results are merged.
 
 async function fetchWebSearchContext(query) {
   const results = await Promise.allSettled([
@@ -303,9 +269,6 @@ async function fetchWebSearchContext(query) {
 
 async function fetchDDGAnswer(query) {
   try {
-    // DDG Instant Answer API ships with Access-Control-Allow-Origin: * on the
-    // callback=? (JSONP) endpoint — we use the bare JSON endpoint which also works
-    // in modern browsers when called with a trailing &callback= trick via &format=json
     const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1&no_redirect=1`;
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return null;
@@ -316,7 +279,7 @@ async function fetchDDGAnswer(query) {
     if (data.Abstract) parts.push(`**Summary:** ${data.Abstract}${data.AbstractURL ? ` — [source](${data.AbstractURL})` : ''}`);
 
     const topics = (data.RelatedTopics || [])
-      .filter(t => t.Text && !t.Topics) // skip category groupings
+      .filter(t => t.Text && !t.Topics)
       .slice(0, 4)
       .map(t => `- ${t.Text}`);
     if (topics.length) parts.push(`**Related topics:**\n${topics.join('\n')}`);
@@ -330,7 +293,6 @@ async function fetchDDGAnswer(query) {
 
 async function fetchWikipediaSummary(query) {
   try {
-    // Step 1: search for the best matching article title
     const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=1&format=json&origin=*`;
     const searchRes = await fetch(searchUrl, { signal: AbortSignal.timeout(5000) });
     if (!searchRes.ok) return null;
@@ -338,7 +300,6 @@ async function fetchWikipediaSummary(query) {
     const title = searchData?.query?.search?.[0]?.title;
     if (!title) return null;
 
-    // Step 2: fetch the plain-text summary of that article
     const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
     const summaryRes = await fetch(summaryUrl, { signal: AbortSignal.timeout(5000) });
     if (!summaryRes.ok) return null;
@@ -346,7 +307,6 @@ async function fetchWikipediaSummary(query) {
     const extract = summaryData?.extract;
     if (!extract) return null;
 
-    // Trim to ~600 chars so we don't blow the context
     const short = extract.length > 600 ? extract.slice(0, 600) + '…' : extract;
     return `### Wikipedia — ${title}\n${short}\n[Read more](${summaryData.content_urls?.desktop?.page || ''})`;
   } catch (e) {
@@ -356,11 +316,10 @@ async function fetchWikipediaSummary(query) {
 }
 
 // ============================
-// ── FEATURE: File Upload (from scratch, FileReader) ──
+// ── FEATURE: File Upload ──
 // ============================
 
 function injectFileUploadUI() {
-  // Create hidden file input
   const fileInput = document.createElement('input');
   fileInput.type = 'file';
   fileInput.id = 'fileUploadInput';
@@ -369,44 +328,37 @@ function injectFileUploadUI() {
   fileInput.style.display = 'none';
   document.body.appendChild(fileInput);
 
-  // Attach button (paperclip)
   const attachBtn = document.createElement('button');
   attachBtn.id = 'attachBtn';
   attachBtn.className = 'input-feature-btn';
   attachBtn.title = 'Attach files';
   attachBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>`;
 
-  // Deep Think button
   const deepThinkBtn = document.createElement('button');
   deepThinkBtn.id = 'deepThinkBtn';
   deepThinkBtn.className = 'input-feature-btn';
   deepThinkBtn.title = 'Deep Think — makes the AI reason step-by-step';
   deepThinkBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>`;
 
-  // Web Search button
   const webSearchBtn = document.createElement('button');
   webSearchBtn.id = 'webSearchBtn';
   webSearchBtn.className = 'input-feature-btn';
   webSearchBtn.title = 'Web Search — fetch live context before answering';
   webSearchBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
 
-  // File preview bar
   const filePreviewBar = document.createElement('div');
   filePreviewBar.id = 'filePreviewBar';
   filePreviewBar.className = 'file-preview-bar';
   filePreviewBar.style.display = 'none';
 
-  // Inject buttons before send button
   const inputWrapper = sendBtn.parentElement;
   inputWrapper.insertBefore(attachBtn, sendBtn);
   inputWrapper.insertBefore(deepThinkBtn, sendBtn);
   inputWrapper.insertBefore(webSearchBtn, sendBtn);
 
-  // Insert file preview bar above input area
   const inputArea = document.querySelector('.input-area') || inputWrapper.parentElement;
   inputArea.insertBefore(filePreviewBar, inputArea.firstChild);
 
-  // ── Event: attach button ──
   attachBtn.addEventListener('click', () => fileInput.click());
 
   fileInput.addEventListener('change', async () => {
@@ -415,11 +367,10 @@ function injectFileUploadUI() {
     for (const file of files) {
       await readAndAttachFile(file);
     }
-    fileInput.value = ''; // reset so same file can be re-added
+    fileInput.value = '';
     renderFilePreviewBar();
   });
 
-  // ── Event: deep think toggle ──
   deepThinkBtn.addEventListener('click', () => {
     state.deepThink = !state.deepThink;
     deepThinkBtn.classList.toggle('active', state.deepThink);
@@ -427,7 +378,6 @@ function injectFileUploadUI() {
     showToast(state.deepThink ? '🧠 Deep Think enabled' : '🧠 Deep Think disabled');
   });
 
-  // ── Event: web search toggle ──
   webSearchBtn.addEventListener('click', () => {
     state.webSearch = !state.webSearch;
     webSearchBtn.classList.toggle('active', state.webSearch);
@@ -435,7 +385,6 @@ function injectFileUploadUI() {
     showToast(state.webSearch ? '🔎 Web Search enabled' : '🔎 Web Search disabled');
   });
 
-  // Inject styles
   injectFeatureStyles();
 }
 
@@ -446,44 +395,23 @@ async function readAndAttachFile(file) {
 
     reader.onload = (e) => {
       if (isImage) {
-        state.attachedFiles.push({
-          name: file.name,
-          type: file.type,
-          content: e.target.result, // data URL
-          isImage: true,
-        });
+        state.attachedFiles.push({ name: file.name, type: file.type, content: e.target.result, isImage: true });
       } else {
-        state.attachedFiles.push({
-          name: file.name,
-          type: file.type || 'text/plain',
-          content: e.target.result,
-          isImage: false,
-        });
+        state.attachedFiles.push({ name: file.name, type: file.type || 'text/plain', content: e.target.result, isImage: false });
       }
       resolve();
     };
 
-    reader.onerror = () => {
-      showToast(`Failed to read ${file.name}`, 'error');
-      resolve();
-    };
+    reader.onerror = () => { showToast(`Failed to read ${file.name}`, 'error'); resolve(); };
 
-    if (isImage) {
-      reader.readAsDataURL(file);
-    } else {
-      reader.readAsText(file);
-    }
+    if (isImage) { reader.readAsDataURL(file); } else { reader.readAsText(file); }
   });
 }
 
 function renderFilePreviewBar() {
   const bar = $('filePreviewBar');
   if (!bar) return;
-  if (!state.attachedFiles.length) {
-    bar.style.display = 'none';
-    bar.innerHTML = '';
-    return;
-  }
+  if (!state.attachedFiles.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
   bar.style.display = 'flex';
   bar.innerHTML = '';
   state.attachedFiles.forEach((f, i) => {
@@ -506,16 +434,13 @@ function getFileIcon(name) {
   return map[ext] || '📎';
 }
 
-// Max chars of text file content to send (prevent token limit 400s)
 const MAX_FILE_CHARS = 40000;
 
-// Build the text-only file context string (for non-image files)
 function buildFileContext(filesSnapshot) {
   const files = filesSnapshot || state.attachedFiles;
   const textFiles = files.filter(f => !f.isImage);
   if (!textFiles.length) return '';
   const parts = textFiles.map(f => {
-    // Sanitize: strip null bytes and truncate
     let content = f.content.replace(/\0/g, '').replace(/\r\n/g, '\n');
     const truncated = content.length > MAX_FILE_CHARS;
     if (truncated) content = content.slice(0, MAX_FILE_CHARS) + `\n\n[...truncated at ${MAX_FILE_CHARS} chars]`;
@@ -524,31 +449,24 @@ function buildFileContext(filesSnapshot) {
   return '\n\n[Attached files:]\n' + parts.join('\n\n');
 }
 
-// Build content blocks array for the API (handles images properly per provider)
 function buildContentBlocks(textContent, filesSnapshot, provider) {
   const files = filesSnapshot || [];
   const imageFiles = files.filter(f => f.isImage);
 
-  // No images — just return plain string (compatible with all providers)
   if (!imageFiles.length) return textContent;
 
-  // With images — build a content array
   const blocks = [];
 
   if (provider === 'anthropic') {
     imageFiles.forEach(f => {
       const mediaType = f.type || 'image/jpeg';
-      // data URL format: "data:image/jpeg;base64,<data>"
       const base64 = f.content.split(',')[1] || f.content;
       blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } });
     });
     blocks.push({ type: 'text', text: textContent });
   } else {
-    // OpenAI-compatible format (works for OpenAI, Cerebras vision models, etc.)
     const contentArr = [];
-    imageFiles.forEach(f => {
-      contentArr.push({ type: 'image_url', image_url: { url: f.content } });
-    });
+    imageFiles.forEach(f => { contentArr.push({ type: 'image_url', image_url: { url: f.content } }); });
     contentArr.push({ type: 'text', text: textContent });
     return contentArr;
   }
@@ -558,8 +476,6 @@ function buildContentBlocks(textContent, filesSnapshot, provider) {
 
 // ============================
 // ── FEATURE: Deep Think ──
-// Wraps the system prompt with explicit chain-of-thought instructions
-// Works on any model/provider without special API support
 // ============================
 
 const DEEP_THINK_PREFIX = `Before answering, reason through this step-by-step inside a <thinking> block:
@@ -589,6 +505,7 @@ function init() {
   updateModelLabel();
   if (!state.apiKey) promptForKey();
   injectFileUploadUI();
+  injectMessageActionStyles();
 }
 
 function promptForKey() {
@@ -679,15 +596,13 @@ async function sendMessage(content) {
 
   welcomeEl.style.display = 'none'; messagesEl.style.display = 'flex';
 
-  // ── Capture attached files before clearing ──
   const filesSnapshot = [...state.attachedFiles];
   const fileContext = buildFileContext(filesSnapshot);
   state.attachedFiles = [];
   renderFilePreviewBar();
 
-  // ── Compose the full user content for display (no injected context) ──
   const displayContent = filesSnapshot.length
-    ? content + '\n\n' + filesSnapshot.map(f => f.isImage ? `📎 ${f.name}` : `📎 ${f.name}`).join('\n')
+    ? content + '\n\n' + filesSnapshot.map(f => `📎 ${f.name}`).join('\n')
     : content;
 
   chat.messages.push({ role: 'user', content: displayContent });
@@ -700,25 +615,21 @@ async function sendMessage(content) {
   state.streaming = true;
 
   try {
-    // ── Web Search: fetch context before calling AI ──
     let searchContext = '';
     if (state.webSearch) {
-      typingEl.querySelector('.bubble').textContent = '🔎 Searching the web…';
+      typingEl.querySelector('.bubble').innerHTML = getThinkingHtml('🔎 Searching the web…');
       searchContext = await fetchWebSearchContext(content) || '';
       if (!searchContext) showToast('🔎 Web search returned no results', 'error');
-      typingEl.querySelector('.bubble').textContent = 'Typing…';
+      typingEl.querySelector('.bubble').innerHTML = getThinkingHtml();
     }
 
-    // ── Build the enriched user message for the API ──
-    // We add file content + search results as extra context, but only for this turn
     let apiUserContent = content;
     if (searchContext) apiUserContent += '\n\n' + searchContext;
     if (fileContext) apiUserContent += fileContext;
 
-    // ── Build API messages: replace last user message with enriched one ──
     const historyMessages = chat.messages
       .filter(m => m.role === 'user' || m.role === 'assistant')
-      .slice(0, -1); // everything except the message we just pushed
+      .slice(0, -1);
 
     const apiMessages = [
       ...historyMessages,
@@ -742,7 +653,6 @@ async function sendMessage(content) {
       await renderToolFeedbackAsync(feedbackText);
     }
 
-    // Inject search context notice if search was used
     if (searchContext) {
       const notice = `🔎 **Web search was used** to augment this response.`;
       chat.messages.push({ role: 'tool-feedback', content: notice });
@@ -750,7 +660,6 @@ async function sendMessage(content) {
       await renderToolFeedbackAsync(notice);
     }
 
-    // Inject deep think notice if enabled
     if (state.deepThink) {
       const notice = `🧠 **Deep Think mode was active** for this response.`;
       chat.messages.push({ role: 'tool-feedback', content: notice });
@@ -775,12 +684,10 @@ async function callProvider(messages, filesSnapshot) {
 
   const systemPrompt = buildSystemPrompt();
 
-  // Build the last user message with proper content blocks if images are attached
   const hasImages = (filesSnapshot || []).some(f => f.isImage);
   let apiMessages = messages;
 
   if (hasImages) {
-    // Re-build the last user message as a content array
     apiMessages = messages.slice(0, -1);
     const lastMsg = messages[messages.length - 1];
     const contentBlocks = buildContentBlocks(lastMsg.content, filesSnapshot, state.provider);
@@ -792,14 +699,9 @@ async function callProvider(messages, filesSnapshot) {
     body = { model: state.model, messages: apiMessages, max_tokens: 4096, temperature: 0.7 };
     if (systemPrompt) body.system = systemPrompt;
   } else if (state.provider === 'corelyn') {
-    // Corelyn provider uses a custom request format
     const lastUserMsg = apiMessages[apiMessages.length - 1]?.content || '';
     const promptText = typeof lastUserMsg === 'string' ? lastUserMsg : JSON.stringify(lastUserMsg);
-    body = {
-      apiKey: state.apiKey,
-      model: state.model,
-      prompt: promptText
-    };
+    body = { apiKey: state.apiKey, model: state.model, prompt: promptText };
   } else {
     const msgs = systemPrompt
       ? [{ role: 'system', content: systemPrompt }, ...apiMessages]
@@ -830,17 +732,171 @@ async function callProvider(messages, filesSnapshot) {
 }
 
 // ============================
+// ── THINKING ANIMATION ──
+// ============================
+
+function getThinkingHtml(label) {
+  const text = label || 'Thinking…';
+  return `
+    <div class="thinking-animation">
+      <div class="thinking-orb">
+        <div class="thinking-core"></div>
+        <div class="thinking-ring thinking-ring-1"></div>
+        <div class="thinking-ring thinking-ring-2"></div>
+        <div class="thinking-ring thinking-ring-3"></div>
+        <div class="thinking-particles">
+          <span></span><span></span><span></span>
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+      <div class="thinking-text">
+        <span class="thinking-label">${escapeHtml(text)}</span>
+        <div class="thinking-dots"><span></span><span></span><span></span></div>
+      </div>
+    </div>
+  `;
+}
+
+// ============================
+// ── MESSAGE ACTIONS (copy + edit) ──
+// ============================
+
+function createMessageActions(role, content, msgEl) {
+  const actions = document.createElement('div');
+  actions.className = 'msg-actions';
+
+  // Copy button (both roles)
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'msg-action-btn msg-copy-btn';
+  copyBtn.title = 'Copy message';
+  copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg><span>Copy</span>`;
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Copied!</span>`;
+      copyBtn.classList.add('copied');
+      setTimeout(() => {
+        copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg><span>Copy</span>`;
+        copyBtn.classList.remove('copied');
+      }, 1800);
+    } catch(e) {
+      showToast('Failed to copy', 'error');
+    }
+  });
+  actions.appendChild(copyBtn);
+
+  // Edit button (user only)
+  if (role === 'user') {
+    const editBtn = document.createElement('button');
+    editBtn.className = 'msg-action-btn msg-edit-btn';
+    editBtn.title = 'Edit message';
+    editBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg><span>Edit</span>`;
+
+    editBtn.addEventListener('click', () => {
+      const bubble = msgEl.querySelector('.bubble');
+      const originalText = content;
+
+      // Build inline editor
+      const editorWrap = document.createElement('div');
+      editorWrap.className = 'msg-inline-editor';
+
+      const textarea = document.createElement('textarea');
+      textarea.className = 'msg-edit-textarea';
+      textarea.value = originalText;
+      textarea.rows = Math.max(2, originalText.split('\n').length);
+      textarea.style.height = 'auto';
+
+      const btnRow = document.createElement('div');
+      btnRow.className = 'msg-edit-btn-row';
+
+      const saveBtn = document.createElement('button');
+      saveBtn.className = 'msg-edit-save';
+      saveBtn.textContent = 'Send';
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'msg-edit-cancel';
+      cancelBtn.textContent = 'Cancel';
+
+      btnRow.appendChild(cancelBtn);
+      btnRow.appendChild(saveBtn);
+      editorWrap.appendChild(textarea);
+      editorWrap.appendChild(btnRow);
+
+      bubble.style.display = 'none';
+      actions.style.display = 'none';
+      msgEl.querySelector('.message-row').appendChild(editorWrap);
+
+      textarea.focus();
+      textarea.style.height = textarea.scrollHeight + 'px';
+      textarea.addEventListener('input', () => {
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+      });
+
+      cancelBtn.addEventListener('click', () => {
+        editorWrap.remove();
+        bubble.style.display = '';
+        actions.style.display = '';
+      });
+
+      saveBtn.addEventListener('click', () => {
+        const newText = textarea.value.trim();
+        if (!newText || newText === originalText) {
+          cancelBtn.click();
+          return;
+        }
+        editorWrap.remove();
+        bubble.style.display = '';
+        actions.style.display = '';
+
+        // Update message in chat history and resend from this point
+        const chat = getActiveChat();
+        if (!chat) return;
+
+        // Find index of this message
+        const msgIndex = chat.messages.findIndex(m => m.role === 'user' && m.content === originalText);
+        if (msgIndex !== -1) {
+          // Truncate messages from this point onward
+          chat.messages.splice(msgIndex);
+          saveChats();
+
+          // Remove all DOM messages from this point
+          const allMsgEls = Array.from(messagesEl.querySelectorAll('.message'));
+          const msgElIdx = allMsgEls.indexOf(msgEl);
+          if (msgElIdx !== -1) {
+            for (let i = msgElIdx; i < allMsgEls.length; i++) {
+              allMsgEls[i].remove();
+            }
+          }
+        }
+
+        // Send the edited message
+        sendMessage(newText);
+      });
+    });
+    actions.appendChild(editBtn);
+  }
+
+  return actions;
+}
+
+// ============================
 // Rendering
 // ============================
 
 function renderMessage(role, content) {
   const msg = document.createElement('div');
   msg.className = `message ${role}`;
-  if(role === 'assistant') {
+
+  if (role === 'assistant') {
     msg.innerHTML = `<div class="message-row"><div class="avatar assistant">✦</div><div class="bubble">${markdownToHtml(content)}</div></div>`;
   } else {
     msg.innerHTML = `<div class="message-row"><div class="avatar user">U</div><div class="bubble">${escapeHtml(content)}</div></div>`;
   }
+
+  const actions = createMessageActions(role, content, msg);
+  msg.appendChild(actions);
+
   messagesEl.appendChild(msg);
   scrollToBottom(true);
 }
@@ -876,10 +932,14 @@ async function renderToolFeedbackAsync(content) {
   scrollToBottom(true);
 }
 
+// ── UPDATED: showTyping uses the new thinking animation ──
 function showTyping() {
-  const msg = document.createElement('div'); msg.className = 'message assistant';
-  msg.innerHTML = `<div class="message-row"><div class="avatar assistant">✦</div><div class="bubble">Typing...</div></div>`;
-  messagesEl.appendChild(msg); scrollToBottom(true); return msg;
+  const msg = document.createElement('div');
+  msg.className = 'message assistant';
+  msg.innerHTML = `<div class="message-row"><div class="avatar assistant">✦</div><div class="bubble thinking-bubble">${getThinkingHtml()}</div></div>`;
+  messagesEl.appendChild(msg);
+  scrollToBottom(true);
+  return msg;
 }
 
 function renderError(text) {
@@ -1034,10 +1094,16 @@ async function renderMessageAsync(role, content) {
       await new Promise(r => setTimeout(r, 8));
     }
     bubble.innerHTML = markdownToHtml(content);
+
+    const actions = createMessageActions(role, content, msg);
+    msg.appendChild(actions);
+
     attachRunButtons();
     checkTriggers(content);
   } else {
     msg.innerHTML = `<div class="message-row"><div class="avatar user">U</div><div class="bubble">${escapeHtml(content)}</div></div>`;
+    const actions = createMessageActions(role, content, msg);
+    msg.appendChild(actions);
     messagesEl.appendChild(msg);
   }
   scrollToBottom(true);
@@ -1254,6 +1320,278 @@ function injectFeatureStyles() {
       border-radius: 3px;
       font-size: 12px;
     }
+  `;
+  document.head.appendChild(style);
+}
+
+// ============================
+// ── NEW: Thinking animation + message action styles ──
+// ============================
+
+function injectMessageActionStyles() {
+  if (document.getElementById('msg-action-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'msg-action-styles';
+  style.textContent = `
+    /* ══════════════════════════════════
+       THINKING ANIMATION
+    ══════════════════════════════════ */
+    .thinking-bubble {
+      background: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+      padding: 4px 0 !important;
+    }
+
+    .thinking-animation {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    /* Orb container */
+    .thinking-orb {
+      position: relative;
+      width: 36px;
+      height: 36px;
+      flex-shrink: 0;
+    }
+
+    /* Glowing core */
+    .thinking-core {
+      position: absolute;
+      inset: 50%;
+      transform: translate(-50%, -50%);
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: radial-gradient(circle, #e0b8ff 0%, #b87ef7 50%, #9a5fd4 100%);
+      box-shadow: 0 0 8px 3px rgba(184, 126, 247, 0.6), 0 0 20px 6px rgba(184, 126, 247, 0.2);
+      animation: thinking-core-pulse 1.8s ease-in-out infinite;
+    }
+
+    @keyframes thinking-core-pulse {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); box-shadow: 0 0 8px 3px rgba(184,126,247,0.6), 0 0 20px 6px rgba(184,126,247,0.2); }
+      50%       { transform: translate(-50%, -50%) scale(1.3); box-shadow: 0 0 12px 5px rgba(184,126,247,0.8), 0 0 28px 10px rgba(184,126,247,0.3); }
+    }
+
+    /* Concentric rotating rings */
+    .thinking-ring {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 1.5px solid transparent;
+    }
+
+    .thinking-ring-1 {
+      border-top-color: rgba(184, 126, 247, 0.8);
+      border-right-color: rgba(184, 126, 247, 0.2);
+      animation: thinking-spin 1.2s linear infinite;
+    }
+
+    .thinking-ring-2 {
+      inset: 4px;
+      border-bottom-color: rgba(224, 184, 255, 0.7);
+      border-left-color: rgba(224, 184, 255, 0.15);
+      animation: thinking-spin 1.8s linear infinite reverse;
+    }
+
+    .thinking-ring-3 {
+      inset: 8px;
+      border-top-color: rgba(154, 95, 212, 0.5);
+      border-right-color: transparent;
+      animation: thinking-spin 2.4s linear infinite;
+    }
+
+    @keyframes thinking-spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+
+    /* Orbiting particles */
+    .thinking-particles {
+      position: absolute;
+      inset: 0;
+      animation: thinking-spin 3s linear infinite;
+    }
+
+    .thinking-particles span {
+      position: absolute;
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: #b87ef7;
+      top: 50%;
+      left: 50%;
+    }
+
+    .thinking-particles span:nth-child(1) { transform: rotate(0deg)   translateX(16px) translateY(-50%); opacity: 0.9; animation: thinking-particle-fade 3s linear infinite 0s; }
+    .thinking-particles span:nth-child(2) { transform: rotate(60deg)  translateX(16px) translateY(-50%); opacity: 0.7; animation: thinking-particle-fade 3s linear infinite 0.5s; }
+    .thinking-particles span:nth-child(3) { transform: rotate(120deg) translateX(16px) translateY(-50%); opacity: 0.5; animation: thinking-particle-fade 3s linear infinite 1s; }
+    .thinking-particles span:nth-child(4) { transform: rotate(180deg) translateX(16px) translateY(-50%); opacity: 0.9; animation: thinking-particle-fade 3s linear infinite 1.5s; }
+    .thinking-particles span:nth-child(5) { transform: rotate(240deg) translateX(16px) translateY(-50%); opacity: 0.6; animation: thinking-particle-fade 3s linear infinite 2s; }
+    .thinking-particles span:nth-child(6) { transform: rotate(300deg) translateX(16px) translateY(-50%); opacity: 0.8; animation: thinking-particle-fade 3s linear infinite 2.5s; }
+
+    @keyframes thinking-particle-fade {
+      0%, 100% { opacity: 0.9; }
+      50%       { opacity: 0.2; }
+    }
+
+    /* Text + animated dots */
+    .thinking-text {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .thinking-label {
+      font-size: 13px;
+      color: var(--text-muted, #888);
+      letter-spacing: 0.02em;
+    }
+
+    .thinking-dots {
+      display: flex;
+      gap: 3px;
+      align-items: center;
+    }
+
+    .thinking-dots span {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--text-muted, #888);
+      animation: thinking-dot-bounce 1.4s ease-in-out infinite;
+    }
+
+    .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes thinking-dot-bounce {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+      40%            { transform: translateY(-5px); opacity: 1; }
+    }
+
+
+    /* ══════════════════════════════════
+       MESSAGE ACTION BUTTONS
+    ══════════════════════════════════ */
+
+    /* Actions sit as a normal flex row below the bubble */
+    .msg-actions {
+      display: flex;
+      gap: 3px;
+      opacity: 0;
+      margin-top: 5px;
+      /* indent to align with bubble (avatar width ~32px + gap ~10px) */
+      padding-left: 42px;
+      transition: opacity 0.15s ease;
+    }
+
+    /* User messages: align actions to the right under their bubble */
+    .message.user .msg-actions {
+      padding-left: 0;
+      padding-right: 42px;
+      justify-content: flex-end;
+    }
+
+    .message:hover .msg-actions {
+      opacity: 1;
+    }
+
+    .msg-action-btn {
+      background: none;
+      border: 1px solid transparent;
+      border-radius: 5px;
+      color: var(--text-muted, #666);
+      cursor: pointer;
+      padding: 3px 6px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      transition: color 0.12s, background 0.12s, border-color 0.12s;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .msg-action-btn:hover {
+      color: var(--text, #ccc);
+      background: rgba(255,255,255,0.06);
+      border-color: rgba(255,255,255,0.1);
+    }
+
+    .msg-action-btn.copied {
+      color: #4caf88 !important;
+    }
+
+    /* No extra bottom padding needed anymore */
+    .message.user,
+    .message.assistant {
+      padding-bottom: 0;
+    }
+
+    /* ── Inline edit UI ── */
+    .msg-inline-editor {
+      width: 100%;
+      margin-top: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .msg-edit-textarea {
+      width: 100%;
+      background: var(--bg-secondary, #1e1e2e);
+      border: 1px solid rgba(126, 184, 247, 0.4);
+      border-radius: 8px;
+      color: var(--text, #eee);
+      font-family: inherit;
+      font-size: 14px;
+      line-height: 1.5;
+      padding: 10px 12px;
+      resize: none;
+      outline: none;
+      box-sizing: border-box;
+      transition: border-color 0.15s;
+    }
+
+    .msg-edit-textarea:focus {
+      border-color: #7eb8f7;
+      box-shadow: 0 0 0 2px rgba(126, 184, 247, 0.15);
+    }
+
+    .msg-edit-btn-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .msg-edit-save,
+    .msg-edit-cancel {
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 14px;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+
+    .msg-edit-save {
+      background: #7eb8f7;
+      color: #0d1117;
+    }
+
+    .msg-edit-save:hover { opacity: 0.88; transform: translateY(-1px); }
+
+    .msg-edit-cancel {
+      background: rgba(255,255,255,0.07);
+      color: var(--text-muted, #888);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .msg-edit-cancel:hover { background: rgba(255,255,255,0.11); color: var(--text, #eee); }
   `;
   document.head.appendChild(style);
 }
