@@ -173,10 +173,39 @@ function buildToolFeedbackMessage(toolResults) {
 // Providers
 // ============================
 
+// Minimal JS fetch example
+// async function getAIResponse(prompt) {
+//   try {
+//     const res = await fetch("https://corelyncloud-backend.onrender.com/chat/completions", {
+//       method: "POST",
+//       headers: { "Content-Type": "application/json" },
+//       body: JSON.stringify({
+//         apiKey: "YOUR_API_KEY",
+//         model: "nvidia/moonshotai/kimi-k2.5",      // When you replace models replace this
+//         prompt: prompt
+//       })
+//     });
+//     const data = await res.json();
+//     // Log AI response
+//     console.log("AI Response:", data);
+//     // Return just the text if available
+//     return data.choices?.[0]?.message?.content || data.text || data;
+//
+//   } catch (err) {
+//     console.error("Error fetching AI response:", err);
+//     return null;
+//   }
+// }
+// // Example usage
+// getAIResponse("Write a short haiku about AI").then(response => {
+//   console.log("Final Response:", response);
+// });
+
 const PROVIDERS = {
   anthropic: { name: 'Anthropic', endpoint: 'https://api.anthropic.com/v1/messages' },
   openai: { name: 'OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions' },
-  cerebras: { name: 'Cerebras', endpoint: 'https://api.cerebras.ai/v1/chat/completions' }
+  cerebras: { name: 'Cerebras', endpoint: 'https://api.cerebras.ai/v1/chat/completions' },
+  corelyn: { name: 'Corelyn', endpoint: 'https://corelyncloud-backend.onrender.com/chat/completions' }
 };
 
 // ============================
@@ -762,6 +791,15 @@ async function callProvider(messages, filesSnapshot) {
   if (state.provider === 'anthropic') {
     body = { model: state.model, messages: apiMessages, max_tokens: 4096, temperature: 0.7 };
     if (systemPrompt) body.system = systemPrompt;
+  } else if (state.provider === 'corelyn') {
+    // Corelyn provider uses a custom request format
+    const lastUserMsg = apiMessages[apiMessages.length - 1]?.content || '';
+    const promptText = typeof lastUserMsg === 'string' ? lastUserMsg : JSON.stringify(lastUserMsg);
+    body = {
+      apiKey: state.apiKey,
+      model: state.model,
+      prompt: promptText
+    };
   } else {
     const msgs = systemPrompt
       ? [{ role: 'system', content: systemPrompt }, ...apiMessages]
@@ -769,9 +807,14 @@ async function callProvider(messages, filesSnapshot) {
     body = { model: state.model, messages: msgs, temperature: 0.7 };
   }
 
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.provider !== 'corelyn') {
+    headers['Authorization'] = `Bearer ${state.apiKey}`;
+  }
+
   const res = await fetch(provider.endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.apiKey}` },
+    headers,
     body: JSON.stringify(body)
   });
   if (!res.ok) {
@@ -783,7 +826,7 @@ async function callProvider(messages, filesSnapshot) {
   if (state.provider === 'anthropic') {
     return data.content?.[0]?.text || "(no response)";
   }
-  return data.choices?.[0]?.message?.content || "(no response)";
+  return data.choices?.[0]?.message?.content || data.text || "(no response)";
 }
 
 // ============================
