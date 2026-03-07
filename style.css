@@ -81,8 +81,8 @@ body { display: flex; height: 100vh; }
   overflow: hidden;
 }
 .logo-icon img {
-  width: 100%;
-  height: 100%;
+  width: 130%;
+  height: 130%;
   object-fit: contain;
 }
 
@@ -1426,5 +1426,6 @@ body { display: flex; height: 100vh; }
 .pg-ai-send:disabled { background: var(--bg4); color: var(--text-muted); cursor: not-allowed; }
 
 .pg-ai-send:not(:disabled):hover { background: #9280ff; transform: scale(1.06); }
+
 
 
