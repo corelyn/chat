@@ -73,8 +73,8 @@ body { display: flex; height: 100vh; }
 }
 
 .logo-icon {
-  width: 24px;
-  height: 24px;
+  width: 38px;
+  height: 38px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1427,3 +1427,4 @@ body { display: flex; height: 100vh; }
 .pg-ai-send:disabled { background: var(--bg4); color: var(--text-muted); cursor: not-allowed; }
 
 .pg-ai-send:not(:disabled):hover { background: #9280ff; transform: scale(1.06); }
+
