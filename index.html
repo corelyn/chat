@@ -100,6 +100,7 @@
         </button>
       </div>
       <p class="input-disclaimer">Corelyn can make mistakes. Verify important information.</p>
+      <button id="openDonateBtn" class="donate-btn">❤️ Donate</button>
     </div>
   </main>
 
@@ -244,6 +245,35 @@ Respond in markdown.</textarea>
       </div>
     </div>
   </div>
+
+  <!-- Donate Modal -->
+  <div class="modal" id="donateModal">
+    <div class="modal-content">
+      
+      <div class="modal-header">
+        <h2>Support Corelyn ❤️</h2>
+        <button class="close-btn" id="closeDonate">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <p>If you like Corelyn AI, consider supporting development.</p>
+        <p>Donations help us improve the platform</p>
+        <p>Thanks!</p>
+
+        <div class="donate-options">
+          <a href="https://paypal.me/corelynai" target="_blank" class="donate-link">
+            💳 PayPal
+          </a>
+        <label class="dont-show">
+        <input type="checkbox" id="dontShowDonate">
+          Don't show this again
+        </label>
+
+      </div>
+
+    </div>
+  </div>
+
 
   <script src="app.js"></script>
 </body>

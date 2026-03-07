@@ -244,6 +244,45 @@ const systemPromptInput = $('systemPromptInput');
 const triggerListEl = $('triggerList');
 const addTriggerBtn = $('addTriggerBtn');
 
+// Did not know where to add this
+const donateModal = document.getElementById("donateModal");
+const openDonateBtn = document.getElementById("openDonateBtn");
+const closeDonate = document.getElementById("closeDonate");
+const dontShowDonate = document.getElementById("dontShowDonate");
+
+// hide donate button if user disabled it
+if (localStorage.getItem("hideDonateModal") === "true") {
+  openDonateBtn.style.display = "none";
+}
+
+// open modal
+openDonateBtn.onclick = () => {
+  donateModal.style.display = "flex";
+};
+
+// close modal
+closeDonate.onclick = () => {
+
+  if (dontShowDonate.checked) {
+    localStorage.setItem("hideDonateModal", "true");
+
+    // hide button immediately
+    openDonateBtn.style.display = "none";
+  }
+
+  donateModal.style.display = "none";
+};
+
+// close when clicking outside modal
+window.onclick = (e) => {
+  if (e.target === donateModal) {
+    donateModal.style.display = "none";
+  }
+};
+
+
+
+
 // ============================
 // ── FEATURE: Web Search ──
 // ============================
