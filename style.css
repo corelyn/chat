@@ -69,7 +69,6 @@ body { display: flex; height: 100vh; }
 .logo {
   display: flex;
   align-items: center;
-  gap: 10px;
 }
 
 .logo-icon {
@@ -1427,4 +1426,5 @@ body { display: flex; height: 100vh; }
 .pg-ai-send:disabled { background: var(--bg4); color: var(--text-muted); cursor: not-allowed; }
 
 .pg-ai-send:not(:disabled):hover { background: #9280ff; transform: scale(1.06); }
+
 
