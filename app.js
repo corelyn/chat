@@ -2286,7 +2286,7 @@ Rules:
     .lyn-submit-status.success { color:#4caf88; }
     .lyn-submit-status.error   { color:#ff5f5f; }
 
-    #lynStoreBtn { display:flex; align-items:center; gap:8px; width:100%; background:none; border:none; border-radius:8px; color:var(--text-muted,#888); cursor:pointer; font-size:13px; padding:8px 10px; text-align:left; transition:background 0.15s,color 0.15s; margin-bottom: 2rem ; }
+    #lynStoreBtn { display:flex; align-items:center; gap:8px; width:100%; background:none; border:none; border-radius:8px; color:var(--text-muted,#888); cursor:pointer; font-size:13px; padding:8px 10px; text-align:left; transition:background 0.15s,color 0.15s; }
     #lynStoreBtn:hover { background:rgba(184,126,247,0.1); color:#c89ef7; }
     #lynStoreBtn svg { flex-shrink:0; }
   `;
@@ -2498,5 +2498,6 @@ Rules:
   }
 
 })();
+
 
 
