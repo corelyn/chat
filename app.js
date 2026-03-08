@@ -988,9 +988,9 @@ function renderMessage(role, content) {
   msg.className = `message ${role}`;
 
   if (role === 'assistant') {
-    msg.innerHTML = `<div class="message-row"><div class="avatar assistant">✦</div><div class="bubble">${markdownToHtml(content)}</div></div>`;
+    msg.innerHTML = `<div class="message-row"><div class="avatar assistant"> </div><div class="bubble">${markdownToHtml(content)}</div></div>`;
   } else {
-    msg.innerHTML = `<div class="message-row"><div class="avatar user">U</div><div class="bubble">${escapeHtml(content)}</div></div>`;
+    msg.innerHTML = `<div class="message-row"><div class="avatar user"> </div><div class="bubble">${escapeHtml(content)}</div></div>`;
   }
 
   const actions = createMessageActions(role, content, msg);
@@ -1035,7 +1035,7 @@ async function renderToolFeedbackAsync(content) {
 function showTyping() {
   const msg = document.createElement('div');
   msg.className = 'message assistant';
-  msg.innerHTML = `<div class="message-row"><div class="avatar assistant">✦</div><div class="bubble thinking-bubble">${getThinkingHtml()}</div></div>`;
+  msg.innerHTML = `<div class="message-row"><div class="avatar assistant"> </div><div class="bubble thinking-bubble">${getThinkingHtml()}</div></div>`;
   messagesEl.appendChild(msg);
   scrollToBottom(true);
   return msg;
@@ -1176,7 +1176,7 @@ async function renderMessageAsync(role, content) {
     row.className = 'message-row';
     const avatar = document.createElement('div');
     avatar.className = 'avatar assistant';
-    avatar.textContent = '✦';
+    avatar.textContent = ' ';
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     row.appendChild(avatar);
@@ -1200,7 +1200,7 @@ async function renderMessageAsync(role, content) {
     attachRunButtons();
     checkTriggers(content);
   } else {
-    msg.innerHTML = `<div class="message-row"><div class="avatar user">U</div><div class="bubble">${escapeHtml(content)}</div></div>`;
+    msg.innerHTML = `<div class="message-row"><div class="avatar user"> </div><div class="bubble">${escapeHtml(content)}</div></div>`;
     const actions = createMessageActions(role, content, msg);
     msg.appendChild(actions);
     messagesEl.appendChild(msg);
@@ -1803,7 +1803,7 @@ Rules:
   pgAiClearBtn.addEventListener('click', () => {
     pgAiHistory = [];
     pgAiMessages.innerHTML = `<div class="pg-ai-welcome">
-      <div class="pg-ai-welcome-icon">✦</div>
+      <div class="pg-ai-welcome-icon"> </div>
       <p>Describe the website you want to build and I'll generate the HTML, CSS, and JS for you.</p>
       <div class="pg-ai-suggestions">
         <button class="pg-ai-suggestion" data-prompt="Build a sleek landing page for a SaaS product with a hero section, features grid, and CTA button">Landing page</button>

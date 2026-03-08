@@ -402,8 +402,8 @@ body { display: flex; height: 100vh; }
   font-weight: 600;
   margin-top: 2px;
 }
-.avatar.user { background: var(--accent); color: #fff; }
-.avatar.assistant { background: var(--bg3); border: 1px solid var(--border-hover); color: var(--accent); }
+.avatar.user { color: #fff; }
+.avatar.assistant { color: var(--accent); }
 
 .bubble {
   padding: 12px 16px;
