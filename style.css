@@ -79,6 +79,7 @@ body { display: flex; height: 100vh; }
   justify-content: center;
   color: var(--accent);
   overflow: hidden;
+  margin-right: 1rem;
 }
 .logo-icon img {
   width: 130%;
@@ -100,15 +101,17 @@ body { display: flex; height: 100vh; }
 }
 
 .donate-btn{
-  margin-top:10px;
-  margin-left: 750px;
-  padding:3px 5px;
-  border:none;
-  border-radius:8px;
-  background:var(--accent);
-  color:white;
-  cursor:pointer;
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 3px 5px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
 }
+
 
 .donate-options{
   display:flex;
@@ -244,7 +247,7 @@ body { display: flex; height: 100vh; }
 .topbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
   padding: 14px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
