@@ -189,7 +189,10 @@ body { display: flex; height: 100vh; }
 
 .sidebar-footer {
   border-top: 1px solid var(--border);
-  padding: 12px 12px;
+  padding-top: 12px;
+  padding-right: 12px;
+  padding-left: 12px;
+  padding-bottom: 12px; /* explicit, no shorthand ambiguity */
 }
 
 .model-selector {
@@ -1458,6 +1461,7 @@ body { display: flex; height: 100vh; }
 .pg-ai-send:disabled { background: var(--bg4); color: var(--text-muted); cursor: not-allowed; }
 
 .pg-ai-send:not(:disabled):hover { background: #9280ff; transform: scale(1.06); }
+
 
 
 
