@@ -117,17 +117,22 @@
           <input type="text" id="apiKeyInput" placeholder="Enter API key">
         </div>
         <div class="setting-item">
-          <label for="providerSelect">Default Provider</label>
-          <select id="providerSelect">
-            <option value="anthropic">Anthropic</option>
-            <option value="openai">OpenAI</option>
-            <option value="cerebras">Cerebras</option>
-            <option value="corelyn">Corelyn</option>
-          </select>
-        </div>
+        <label for="providerSelect">Default Provider</label>
+        <select id="providerSelect">
+          <option value="anthropic">Anthropic</option>
+          <option value="openai">OpenAI</option>
+          <option value="cerebras">Cerebras</option>
+          <option value="corelyn">Corelyn</option>
+        </select>
+      </div>
+
+      <div class="setting-item">
+        <label for="modelSelect">Default Model</label>
+        <select id="modelSelect"></select>
+      </div>
         <div class="setting-item">
           <label for="modelSelect">Default Model</label>
-          <input type="text" id="modelSelect" placeholder="Model name">
+          <datalist id="modelExamples"></datalist>
         </div>
         <div class="setting-item">
           <label for="systemPromptInput">System Prompt</label>

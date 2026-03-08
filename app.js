@@ -239,7 +239,6 @@ const closeSettingsBtn = $('closeSettings');
 const saveSettingsBtn = $('saveSettingsBtn');
 const apiKeyInput = $('apiKeyInput');
 const providerSelect = $('providerSelect');
-const modelSelect = $('modelSelect');
 const systemPromptInput = $('systemPromptInput');
 const triggerListEl = $('triggerList');
 const addTriggerBtn = $('addTriggerBtn');
@@ -249,6 +248,67 @@ const donateModal = document.getElementById("donateModal");
 const openDonateBtn = document.getElementById("openDonateBtn");
 const closeDonate = document.getElementById("closeDonate");
 const dontShowDonate = document.getElementById("dontShowDonate");
+
+const modelSelect = document.getElementById("modelSelect");
+
+const providerModels = {
+  corelyn: [
+    "nvidia/moonshotai/kimi-k2.5",
+    "nvidia/qwen/qwen3.5-397b-a17b",
+    "nvidia/microsoft/phi-3.5-mini-instruct",
+    "nvidia/meta/llama-3.2-1b-instruct",
+    "nvidia/deepseek-ai/deepseek-v3.1",
+    "nvidia/z-ai/glm5",
+    "nvidia/mistralai/mistral-7b-instruct-v0.2",
+    "nvidia/google/gemma-7b",
+    "nvidia/tiiuae/falcon3-7b-instruct",
+    "cerebras/llama3.1-8b",
+    "cerebras/gpt-oss-120b"
+  ],
+  openai: [
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4.1-nano",
+    "o4-mini",
+    "o3-mini"
+  ],
+
+  anthropic: [
+  "claude-3-opus",
+  "claude-3-sonnet",
+  "claude-3-haiku",
+  "claude-3.5-sonnet",
+  "claude-3.5-haiku"
+  ],
+
+  cerebras: [
+    "llama3.1-8b",
+    "gpt-oss-120b"
+  ]
+};
+
+function updateModels() {
+  const provider = providerSelect.value;
+
+  modelSelect.innerHTML = "";
+
+  const models = providerModels[provider] || [];
+
+  models.forEach(model => {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = model;
+    modelSelect.appendChild(option);
+  });
+}
+
+providerSelect.addEventListener("change", updateModels);
+
+// initialize on page load
+updateModels();
+
 
 // hide donate button if user disabled it
 if (localStorage.getItem("hideDonateModal") === "true") {
