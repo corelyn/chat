@@ -2098,4 +2098,592 @@ Rules:
     run();
   };
 
+
+})();
+
+// ============================
+// ── LYN STORE ──
+// ============================
+
+(function initLynStore() {
+
+  const BACKEND = 'https://corelyncloud-backend.onrender.com';
+
+  async function loadAllLyns() {
+    const res = await fetch(`${BACKEND}/lyns`);
+    if (!res.ok) throw new Error('Failed to load Lyns: ' + res.status);
+    const data = await res.json();
+    return data.lyns || [];
+  }
+
+  async function saveLyn(lyn) {
+    const res = await fetch(`${BACKEND}/lyns`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(lyn),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Write failed: ' + res.status);
+    }
+  }
+
+  // ── Inject the button into the sidebar ──
+  const sidebar = document.getElementById('sidebar');
+  const sidebarBottom = sidebar?.querySelector('.sidebar-bottom') || sidebar;
+
+  const lynStoreBtn = document.createElement('button');
+  lynStoreBtn.id = 'lynStoreBtn';
+  lynStoreBtn.className = 'sidebar-icon-btn';
+  lynStoreBtn.title = 'Lyn Store — browse & share system prompts';
+  lynStoreBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg><span>Lyn Store</span>`;
+
+  const openSettingsBtn = document.getElementById('openSettingsBtn');
+  if (openSettingsBtn && openSettingsBtn.parentElement === sidebarBottom) {
+    sidebarBottom.insertBefore(lynStoreBtn, openSettingsBtn);
+  } else {
+    sidebarBottom.appendChild(lynStoreBtn);
+  }
+
+  // ── Inject the modal HTML ──
+  const modalEl = document.createElement('div');
+  modalEl.id = 'lynStoreModal';
+  modalEl.innerHTML = `
+    <div class="lyn-modal-backdrop"></div>
+    <div class="lyn-modal-panel">
+      <div class="lyn-modal-header">
+        <div class="lyn-modal-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 01-8 0"/></svg>
+          Lyn Store
+        </div>
+        <div class="lyn-tabs">
+          <button class="lyn-tab active" data-tab="browse">Browse Lyns</button>
+          <button class="lyn-tab" data-tab="submit">Submit a Lyn</button>
+        </div>
+        <button class="lyn-close-btn" id="lynCloseBtn">×</button>
+      </div>
+
+      <div class="lyn-tab-content" id="lynBrowseTab">
+        <div class="lyn-search-bar">
+          <input type="text" id="lynSearchInput" placeholder="Search Lyns by title or description…" />
+        </div>
+        <div class="lyn-grid" id="lynGrid">
+          <div class="lyn-loading">Loading Lyns…</div>
+        </div>
+      </div>
+
+      <div class="lyn-tab-content hidden" id="lynSubmitTab">
+        <div class="lyn-submit-form">
+          <label class="lyn-label">Title <span class="lyn-required">*</span></label>
+          <input type="text" id="lynTitleInput" placeholder="e.g. Pirate Captain, Code Reviewer, Socratic Tutor…" maxlength="60" />
+          <div class="lyn-char-count" id="lynTitleCount">0 / 60</div>
+
+          <label class="lyn-label">Description <span class="lyn-optional">(optional)</span></label>
+          <input type="text" id="lynDescInput" placeholder="One line about what this Lyn does…" maxlength="120" />
+
+          <label class="lyn-label">Author <span class="lyn-optional">(optional)</span></label>
+          <input type="text" id="lynAuthorInput" placeholder="Your name or handle…" maxlength="40" />
+
+          <label class="lyn-label">System Prompt <span class="lyn-required">*</span></label>
+          <div class="lyn-prompt-toolbar">
+            <button class="lyn-prefill-btn" id="lynPrefillBtn">⬇ Use current system prompt</button>
+          </div>
+          <textarea id="lynPromptInput" rows="8" placeholder="You are a…" maxlength="8000"></textarea>
+          <div class="lyn-char-count" id="lynPromptCount">0 / 8000</div>
+
+          <div class="lyn-submit-row">
+            <span class="lyn-submit-note">⚠️ Submissions are public and visible to all users.</span>
+            <button class="lyn-submit-btn" id="lynSubmitBtn">Publish Lyn</button>
+          </div>
+          <div class="lyn-submit-status" id="lynSubmitStatus"></div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modalEl);
+
+  // ── Inject styles ──
+  const style = document.createElement('style');
+  style.textContent = `
+    #lynStoreModal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1100;
+      align-items: center;
+      justify-content: center;
+    }
+    #lynStoreModal.open { display: flex; }
+
+    .lyn-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+    }
+
+    .lyn-modal-panel {
+      position: relative;
+      z-index: 1;
+      background: var(--bg-secondary, #1a1a2e);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px;
+      width: min(820px, 95vw);
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+    }
+
+    .lyn-modal-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 20px 0;
+      flex-shrink: 0;
+    }
+
+    .lyn-modal-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text, #eee);
+      flex-shrink: 0;
+    }
+
+    .lyn-tabs {
+      display: flex;
+      gap: 4px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 8px;
+      padding: 3px;
+      flex: 1;
+    }
+
+    .lyn-tab {
+      flex: 1;
+      background: none;
+      border: none;
+      border-radius: 6px;
+      color: var(--text-muted, #888);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 14px;
+      transition: all 0.15s;
+    }
+    .lyn-tab.active {
+      background: rgba(184,126,247,0.18);
+      color: #d4a8ff;
+    }
+    .lyn-tab:hover:not(.active) {
+      background: rgba(255,255,255,0.06);
+      color: var(--text, #eee);
+    }
+
+    .lyn-close-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted, #888);
+      cursor: pointer;
+      font-size: 22px;
+      line-height: 1;
+      padding: 0 4px;
+      transition: color 0.15s;
+      flex-shrink: 0;
+    }
+    .lyn-close-btn:hover { color: var(--text, #eee); }
+
+    .lyn-tab-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px 20px;
+    }
+    .lyn-tab-content.hidden { display: none; }
+
+    .lyn-search-bar { margin-bottom: 14px; }
+    .lyn-search-bar input {
+      width: 100%;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      color: var(--text, #eee);
+      font-size: 13px;
+      padding: 9px 13px;
+      outline: none;
+      box-sizing: border-box;
+      transition: border-color 0.15s;
+    }
+    .lyn-search-bar input:focus { border-color: #b87ef7; }
+    .lyn-search-bar input::placeholder { color: var(--text-muted, #666); }
+
+    .lyn-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .lyn-loading, .lyn-empty {
+      grid-column: 1/-1;
+      text-align: center;
+      color: var(--text-muted, #888);
+      padding: 40px 0;
+      font-size: 14px;
+    }
+
+    .lyn-card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 14px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s, transform 0.1s;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .lyn-card:hover {
+      border-color: rgba(184,126,247,0.4);
+      background: rgba(184,126,247,0.06);
+      transform: translateY(-1px);
+    }
+
+    .lyn-card-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .lyn-card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text, #eee);
+      line-height: 1.3;
+    }
+
+    .lyn-card-badge {
+      font-size: 10px;
+      background: rgba(184,126,247,0.15);
+      color: #c89ef7;
+      border: 1px solid rgba(184,126,247,0.25);
+      border-radius: 20px;
+      padding: 2px 7px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .lyn-card-desc {
+      font-size: 12px;
+      color: var(--text-muted, #888);
+      line-height: 1.4;
+    }
+
+    .lyn-card-preview {
+      font-size: 11px;
+      color: rgba(255,255,255,0.3);
+      font-family: monospace;
+      background: rgba(0,0,0,0.2);
+      border-radius: 6px;
+      padding: 7px 9px;
+      line-height: 1.4;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+    }
+
+    .lyn-card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: auto;
+    }
+
+    .lyn-card-author { font-size: 11px; color: rgba(255,255,255,0.3); }
+
+    .lyn-card-use-btn {
+      background: rgba(184,126,247,0.15);
+      border: 1px solid rgba(184,126,247,0.3);
+      border-radius: 6px;
+      color: #c89ef7;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 4px 10px;
+      transition: all 0.15s;
+    }
+    .lyn-card-use-btn:hover {
+      background: rgba(184,126,247,0.28);
+      border-color: #b87ef7;
+      color: #e0c4ff;
+    }
+
+    .lyn-submit-form {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-width: 600px;
+    }
+
+    .lyn-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text, #eee);
+      margin-top: 10px;
+    }
+    .lyn-label:first-child { margin-top: 0; }
+    .lyn-required { color: #f77eb8; }
+    .lyn-optional { color: var(--text-muted, #666); font-weight: 400; font-size: 12px; }
+
+    .lyn-submit-form input[type="text"],
+    .lyn-submit-form textarea {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      color: var(--text, #eee);
+      font-size: 13px;
+      font-family: inherit;
+      padding: 9px 13px;
+      outline: none;
+      width: 100%;
+      box-sizing: border-box;
+      transition: border-color 0.15s;
+      resize: vertical;
+    }
+    .lyn-submit-form input:focus,
+    .lyn-submit-form textarea:focus { border-color: #b87ef7; box-shadow: 0 0 0 2px rgba(184,126,247,0.12); }
+    .lyn-submit-form textarea { font-family: monospace; font-size: 12px; line-height: 1.5; }
+
+    .lyn-char-count {
+      font-size: 11px;
+      color: var(--text-muted, #666);
+      text-align: right;
+      margin-top: -2px;
+    }
+
+    .lyn-prompt-toolbar { display: flex; gap: 8px; margin-bottom: 4px; }
+
+    .lyn-prefill-btn {
+      background: none;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 6px;
+      color: var(--text-muted, #888);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 4px 10px;
+      transition: all 0.15s;
+    }
+    .lyn-prefill-btn:hover { border-color: #b87ef7; color: #c89ef7; }
+
+    .lyn-submit-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+
+    .lyn-submit-note { font-size: 12px; color: var(--text-muted, #666); }
+
+    .lyn-submit-btn {
+      background: linear-gradient(135deg, #9a5fd4, #b87ef7);
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 9px 22px;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .lyn-submit-btn:hover { opacity: 0.88; transform: translateY(-1px); }
+    .lyn-submit-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    .lyn-submit-status { font-size: 13px; min-height: 18px; }
+    .lyn-submit-status.success { color: #4caf88; }
+    .lyn-submit-status.error   { color: #ff5f5f; }
+
+    #lynStoreBtn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      background: none;
+      border: none;
+      border-radius: 8px;
+      color: var(--text-muted, #888);
+      cursor: pointer;
+      font-size: 13px;
+      padding: 8px 10px;
+      text-align: left;
+      transition: background 0.15s, color 0.15s;
+    }
+    #lynStoreBtn:hover { background: rgba(184,126,247,0.1); color: #c89ef7; }
+    #lynStoreBtn svg { flex-shrink: 0; }
+  `;
+  document.head.appendChild(style);
+
+  // ── State ──
+  let allLyns = [];
+  let searchQuery = '';
+
+  // ── DOM refs ──
+  const modal        = document.getElementById('lynStoreModal');
+  const closeBtn     = document.getElementById('lynCloseBtn');
+  const tabs         = modal.querySelectorAll('.lyn-tab');
+  const browseTab    = document.getElementById('lynBrowseTab');
+  const submitTab    = document.getElementById('lynSubmitTab');
+  const lynGrid      = document.getElementById('lynGrid');
+  const searchInput  = document.getElementById('lynSearchInput');
+  const titleInput   = document.getElementById('lynTitleInput');
+  const descInput    = document.getElementById('lynDescInput');
+  const authorInput  = document.getElementById('lynAuthorInput');
+  const promptInput  = document.getElementById('lynPromptInput');
+  const titleCount   = document.getElementById('lynTitleCount');
+  const promptCount  = document.getElementById('lynPromptCount');
+  const prefillBtn   = document.getElementById('lynPrefillBtn');
+  const submitBtn    = document.getElementById('lynSubmitBtn');
+  const submitStatus = document.getElementById('lynSubmitStatus');
+
+  // ── Tab switching ──
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const target = tab.dataset.tab;
+      browseTab.classList.toggle('hidden', target !== 'browse');
+      submitTab.classList.toggle('hidden', target !== 'submit');
+    });
+  });
+
+  // ── Open / close ──
+  lynStoreBtn.addEventListener('click', () => {
+    modal.classList.add('open');
+    refreshGrid();
+  });
+  closeBtn.addEventListener('click', () => modal.classList.remove('open'));
+  modal.querySelector('.lyn-modal-backdrop').addEventListener('click', () => modal.classList.remove('open'));
+
+  // ── Search ──
+  searchInput.addEventListener('input', () => {
+    searchQuery = searchInput.value.toLowerCase();
+    renderGrid(allLyns);
+  });
+
+  // ── Char counters ──
+  titleInput.addEventListener('input',  () => { titleCount.textContent  = `${titleInput.value.length} / 60`; });
+  promptInput.addEventListener('input', () => { promptCount.textContent = `${promptInput.value.length} / 8000`; });
+
+  // ── Prefill from current system prompt ──
+  prefillBtn.addEventListener('click', () => {
+    if (state && state.systemPrompt) {
+      promptInput.value = state.systemPrompt;
+      promptCount.textContent = `${promptInput.value.length} / 8000`;
+    } else {
+      showToast('No system prompt set', 'error');
+    }
+  });
+
+  // ── Render grid ──
+  function renderGrid(lyns) {
+    const filtered = searchQuery
+      ? lyns.filter(l =>
+          l.title.toLowerCase().includes(searchQuery) ||
+          (l.description || l.desc || '').toLowerCase().includes(searchQuery) ||
+          (l.author || '').toLowerCase().includes(searchQuery))
+      : lyns;
+
+    if (!filtered.length) {
+      lynGrid.innerHTML = `<div class="lyn-empty">${
+        lyns.length === 0
+          ? 'No Lyns yet — be the first to submit one!'
+          : 'No results for "' + escapeHtml(searchQuery) + '"'
+      }</div>`;
+      return;
+    }
+
+    lynGrid.innerHTML = '';
+    filtered.forEach(lyn => {
+      const desc = lyn.description || lyn.desc || '';
+      const card = document.createElement('div');
+      card.className = 'lyn-card';
+      card.innerHTML = `
+        <div class="lyn-card-header">
+          <div class="lyn-card-title">${escapeHtml(lyn.title)}</div>
+          ${lyn.author ? `<div class="lyn-card-badge">${escapeHtml(lyn.author)}</div>` : ''}
+        </div>
+        ${desc ? `<div class="lyn-card-desc">${escapeHtml(desc)}</div>` : ''}
+        <div class="lyn-card-preview">${escapeHtml(lyn.prompt)}</div>
+        <div class="lyn-card-footer">
+          <span class="lyn-card-author">${new Date(lyn.created_at || lyn.createdAt).toLocaleDateString()}</span>
+          <button class="lyn-card-use-btn">Use this Lyn</button>
+        </div>
+      `;
+      card.querySelector('.lyn-card-use-btn').addEventListener('click', e => { e.stopPropagation(); applyLyn(lyn); });
+      card.addEventListener('click', () => applyLyn(lyn));
+      lynGrid.appendChild(card);
+    });
+  }
+
+  async function refreshGrid() {
+    lynGrid.innerHTML = '<div class="lyn-loading">Loading Lyns…</div>';
+    try {
+      allLyns = await loadAllLyns();
+      renderGrid(allLyns);
+    } catch(e) {
+      lynGrid.innerHTML = '<div class="lyn-empty">⚠️ Could not connect to Lyn Store. Try again later.</div>';
+    }
+  }
+
+  // ── Apply a Lyn as system prompt ──
+  function applyLyn(lyn) {
+    state.systemPrompt = lyn.prompt;
+    localStorage.setItem('nc_systemprompt', lyn.prompt);
+    modal.classList.remove('open');
+    showToast(`✓ Lyn "${lyn.title}" applied`);
+  }
+
+  // ── Submit ──
+  submitBtn.addEventListener('click', async () => {
+    const title  = titleInput.value.trim();
+    const prompt = promptInput.value.trim();
+    if (!title)  { setStatus('Please enter a title.', 'error'); return; }
+    if (!prompt) { setStatus('Please enter a system prompt.', 'error'); return; }
+
+    submitBtn.disabled = true;
+    setStatus('Publishing…', '');
+
+    const lyn = {
+      id:        Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      title,
+      desc:      descInput.value.trim(),
+      author:    authorInput.value.trim(),
+      prompt,
+      createdAt: Date.now(),
+    };
+
+    try {
+      await saveLyn(lyn);
+      setStatus('✓ Lyn published!', 'success');
+      titleInput.value = descInput.value = authorInput.value = promptInput.value = '';
+      titleCount.textContent  = '0 / 60';
+      promptCount.textContent = '0 / 8000';
+      setTimeout(() => { tabs[0].click(); refreshGrid(); setStatus('', ''); }, 1200);
+    } catch(e) {
+      setStatus('Failed to publish: ' + e.message, 'error');
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  function setStatus(msg, type) {
+    submitStatus.textContent = msg;
+    submitStatus.className = 'lyn-submit-status' + (type ? ' ' + type : '');
+  }
+
 })();
