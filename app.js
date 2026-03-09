@@ -2131,7 +2131,7 @@ Rules:
 
   // ── Sidebar button ──
   const sidebar = document.getElementById('sidebar');
-  const sidebarBottom = sidebar?.querySelector('.sidebar-bottom') || sidebar;
+  const sidebarBottom = sidebar?.querySelector('.sidebar-footer') || sidebar;
   const lynStoreBtn = document.createElement('button');
   lynStoreBtn.id = 'lynStoreBtn';
   lynStoreBtn.className = 'sidebar-icon-btn';
@@ -2286,7 +2286,7 @@ Rules:
     .lyn-submit-status.success { color:#4caf88; }
     .lyn-submit-status.error   { color:#ff5f5f; }
 
-    #lynStoreBtn { display:flex; align-items:center; gap:8px; width:100%; background:none; border:none; border-radius:8px; color:var(--text-muted,#888); cursor:pointer; font-size:13px; padding:8px 10px; text-align:left; transition:background 0.15s,color 0.15s; }
+    #lynStoreBtn { display:flex; align-items:center; gap:8px; width:100%; background:none; border:none; border-radius:8px; color:var(--text-muted,#888); cursor:pointer; font-size:13px; padding:8px 10px; text-align:left; transition:background 0.15s color 0.15s; margin-top: 1rem; margin-bottom: 1rem; }
     #lynStoreBtn:hover { background:rgba(184,126,247,0.1); color:#c89ef7; }
     #lynStoreBtn svg { flex-shrink:0; }
   `;
