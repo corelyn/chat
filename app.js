@@ -262,8 +262,9 @@ const providerModels = {
     "nvidia/mistralai/mistral-7b-instruct-v0.2",
     "nvidia/google/gemma-7b",
     "nvidia/tiiuae/falcon3-7b-instruct",
-    "cerebras/llama3.1-8b",
-    "cerebras/gpt-oss-120b"
+    "nvidia/minimaxai/minimax-m2.5",
+    "nvidia/nvidia/nemotron-3-super-120b-a12",
+    "cerebras/llama3.1-8b"
   ],
   openai: [
     "gpt-4o",
@@ -276,16 +277,16 @@ const providerModels = {
   ],
 
   anthropic: [
-  "claude-3-opus",
-  "claude-3-sonnet",
-  "claude-3-haiku",
-  "claude-3.5-sonnet",
-  "claude-3.5-haiku"
+    "claude-3-opus",
+    "claude-3-sonnet",
+    "claude-3-haiku",
+    "claude-3.5-sonnet",
+    "claude-3.5-haiku"
   ],
 
   cerebras: [
     "llama3.1-8b",
-    "gpt-oss-120b"
+    "qwen-3-235b-a22b-instruct-2507"
   ]
 };
 
