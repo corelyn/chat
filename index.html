@@ -178,13 +178,16 @@ Respond in markdown.</textarea>
 
         <div class="auth-view" id="authLoadingView" style="display:none;">
           <div style="display:flex;align-items:center;gap:12px;">
-            <div style="width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 18px rgba(124,106,255,.7);"></div>
+            <div class="auth-spinner"></div>
             <div style="font-size:13px;color:var(--text-dim);">Processing…</div>
           </div>
         </div>
 
         <div class="auth-view" id="authErrorView" style="display:none;">
-          <div style="font-size:13px;color:var(--text-dim);">Something went wrong:</div>
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            <div class="auth-error-icon">&#10005;</div>
+            <div style="font-size:13px;color:var(--text-dim);">Something went wrong:</div>
+          </div>
           <div id="authErrorText" style="color:#ff5f5f;font-size:13px;word-break:break-word;margin-top:6px;"></div>
           <div class="modal-footer" style="justify-content:space-between;margin-top:12px;">
             <button
@@ -192,10 +195,10 @@ Respond in markdown.</textarea>
               style="padding:8px 14px;background:var(--accent);border:none;border-radius:var(--radius-sm);color:#fff;font-size:13px;font-family:var(--font);cursor:pointer;transition:all var(--transition);"
             >Try again</button>
             <button
-              class="close-btn"
               id="authCloseFromError"
-              style="font-size:18px;padding:0 4px;"
-            >&times;</button>
+              class="auth-error-close-btn"
+              title="Dismiss"
+            >&#10005; Close</button>
           </div>
         </div>
       </div>

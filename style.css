@@ -655,6 +655,55 @@ body { display: flex; height: 100vh; }
 }
 .close-btn:hover { color: var(--accent); }
 
+/* Auth modal — spinner */
+@keyframes authSpin {
+  to { transform: rotate(360deg); }
+}
+.auth-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(124,106,255,0.25);
+  border-top-color: var(--accent);
+  box-shadow: 0 0 10px rgba(124,106,255,0.35);
+  animation: authSpin 0.75s linear infinite;
+  flex-shrink: 0;
+}
+
+/* Auth modal — error icon */
+.auth-error-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(255,95,95,0.15);
+  color: #ff5f5f;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Auth modal — dismiss X button on error */
+.auth-error-close-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 13px;
+  background: rgba(255,95,95,0.1);
+  border: 1px solid rgba(255,95,95,0.3);
+  border-radius: var(--radius-sm);
+  color: #ff5f5f;
+  font-size: 13px;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.auth-error-close-btn:hover {
+  background: rgba(255,95,95,0.2);
+  border-color: rgba(255,95,95,0.55);
+}
+
 .modal-body {
   display: flex;
   flex-direction: column;
