@@ -288,7 +288,6 @@ const authErrorText = $('authErrorText');
 const authRetryBtn = $('authRetryBtn');
 const authCloseFromErrorBtn = $('authCloseFromError');
 const authGoogleBtn = $('authGoogleBtn');
-const tosCheck = document.getElementById("authTosCheck");
 
 const providerModels = {
   corelyn: [
@@ -660,38 +659,12 @@ function promptForKeyManual() {
 // ============================
 
 const CORELYN_API_BASE = 'https://api.corelyn.ro';
-const CORELYN_GOOGLE_CLIENT_ID =
-  '1095022231097-m2jpnjm7fkh0k2kd46hca3p4i8b6v3k0.apps.googleusercontent.com';
+const CORELYN_GOOGLE_CLIENT_ID = '1095022231097-m2jpnjm7fkh0k2kd46hca3p4i8b6v3k0.apps.googleusercontent.com';
 const CORELYN_USER_TOKEN_KEY = 'corelyn_user_token';
 
 let apiKeyEnsurePromise = null;
 let apiKeyEnsureResolve = null;
 let googleButtonInitialized = false;
-
-// ============================
-// TOS CHECK (NEW)
-// ============================
-
-function isTosAccepted() {
-  const el = document.getElementById('authTosCheck');
-  return !!el?.checked;
-}
-
-function requireTosOrBlock() {
-  if (isTosAccepted()) return true;
-
-  if (authErrorText) {
-    authErrorText.textContent =
-      'You must agree to the Terms of Service before continuing.';
-  }
-
-  showAuthView('error');
-  return false;
-}
-
-// ============================
-// AUTH UI
-// ============================
 
 function showAuthView(viewName) {
   const views = [authAccountView, authLoadingView, authErrorView].filter(Boolean);
@@ -719,21 +692,12 @@ function resolveApiKeyEnsure(value) {
   r(value);
 }
 
-// ============================
-// STATE
-// ============================
-
 function setStateApiKey(newKey) {
   state.apiKey = newKey;
   localStorage.setItem('nc_apikey', state.apiKey);
-
   if (apiKeyInput) apiKeyInput.value = state.apiKey;
   sendBtn.disabled = !inputEl.value.trim();
 }
-
-// ============================
-// API CALLS
-// ============================
 
 async function fetchCorelynKeyFromToken(token) {
   const res = await fetch(`${CORELYN_API_BASE}/get-key`, {
@@ -743,21 +707,13 @@ async function fetchCorelynKeyFromToken(token) {
   });
 
   const data = await res.json().catch(() => ({}));
-
   if (!res.ok) throw new Error(data?.error || `Failed to fetch key (${res.status})`);
   if (data?.error) throw new Error(data.error);
   if (!data?.key) throw new Error('No key returned from server.');
-
   return data.key;
 }
 
-// ============================
-// GOOGLE LOGIN (UPDATED)
-// ============================
-
 async function handleGoogleLogin(response) {
-  if (!requireTosOrBlock()) return;
-
   showAuthView('loading');
 
   try {
@@ -771,7 +727,6 @@ async function handleGoogleLogin(response) {
     });
 
     const data = await res.json().catch(() => ({}));
-
     if (!res.ok) throw new Error(data?.error || `Google login failed (${res.status})`);
     if (data?.error) throw new Error(data.error);
     if (!data?.token) throw new Error('Server did not return a token.');
@@ -779,21 +734,15 @@ async function handleGoogleLogin(response) {
     localStorage.setItem(CORELYN_USER_TOKEN_KEY, data.token);
 
     const apiKey = await fetchCorelynKeyFromToken(data.token);
-
     setStateApiKey(apiKey);
     closeAuthModal();
     resolveApiKeyEnsure(apiKey);
-
   } catch (err) {
     const msg = err?.message || 'Failed to generate API key.';
     if (authErrorText) authErrorText.textContent = msg;
     showAuthView('error');
   }
 }
-
-// ============================
-// GOOGLE BUTTON INIT
-// ============================
 
 function initGoogleAuthButton() {
   if (googleButtonInitialized) return;
@@ -819,43 +768,24 @@ function initGoogleAuthButton() {
   googleButtonInitialized = true;
 }
 
-// ============================
-// OPEN AUTH FLOW (UPDATED)
-// ============================
-
 function openGoogleForApiKey() {
-  if (!requireTosOrBlock()) {
-    return Promise.resolve(null);
-  }
-
   if (!authModal) return Promise.resolve(null);
 
   return new Promise(async (resolve) => {
     apiKeyEnsureResolve = resolve;
 
-    if (closeAuthModalBtn)
-      closeAuthModalBtn.onclick = () => {
-        closeAuthModal();
-        resolveApiKeyEnsure(null);
-      };
-
-    if (authCloseFromErrorBtn)
-      authCloseFromErrorBtn.onclick = () => {
-        closeAuthModal();
-        resolveApiKeyEnsure(null);
-      };
-
+    // Bind close/retry handlers (override, no duplication).
+    if (closeAuthModalBtn) closeAuthModalBtn.onclick = () => { closeAuthModal(); resolveApiKeyEnsure(null); };
+    if (authCloseFromErrorBtn) authCloseFromErrorBtn.onclick = () => { closeAuthModal(); resolveApiKeyEnsure(null); };
     if (authRetryBtn) {
       authRetryBtn.onclick = async () => {
         const token = localStorage.getItem(CORELYN_USER_TOKEN_KEY);
-
         if (!token) {
           showAuthView('account');
           return;
         }
 
         showAuthView('loading');
-
         try {
           const apiKey = await fetchCorelynKeyFromToken(token);
           setStateApiKey(apiKey);
@@ -873,11 +803,10 @@ function openGoogleForApiKey() {
     showAuthView('account');
     initGoogleAuthButton();
 
+    // If user already has a token saved, we can skip the account view.
     const existingToken = localStorage.getItem(CORELYN_USER_TOKEN_KEY);
-
     if (existingToken) {
       showAuthView('loading');
-
       try {
         const apiKey = await fetchCorelynKeyFromToken(existingToken);
         setStateApiKey(apiKey);
@@ -885,27 +814,20 @@ function openGoogleForApiKey() {
         resolveApiKeyEnsure(apiKey);
       } catch (err) {
         localStorage.removeItem(CORELYN_USER_TOKEN_KEY);
-
         const msg = err?.message || 'Token invalid. Please sign in again.';
         if (authErrorText) authErrorText.textContent = msg;
-
         showAuthView('error');
       }
     }
   });
 }
 
-// ============================
-// ENSURE API KEY (UPDATED SAFETY)
-// ============================
-
 async function ensureApiKey() {
-  if (!requireTosOrBlock()) return null;
-
   if (state.apiKey) return state.apiKey;
   if (apiKeyEnsurePromise) return apiKeyEnsurePromise;
 
   apiKeyEnsurePromise = (async () => {
+    // Corelyn-generated keys only work with the Corelyn provider.
     if (state.provider !== 'corelyn') {
       state.provider = 'corelyn';
       localStorage.setItem('nc_provider', state.provider);
@@ -918,20 +840,16 @@ async function ensureApiKey() {
 
       const corelynModels = providerModels.corelyn || [];
       const fallbackModel = 'cerebras/llama3.1-8b';
-
       if (corelynModels.length && !corelynModels.includes(state.model)) {
-        state.model = corelynModels.includes(fallbackModel)
-          ? fallbackModel
-          : corelynModels[0];
-
+        state.model = corelynModels.includes(fallbackModel) ? fallbackModel : corelynModels[0];
         localStorage.setItem('nc_model', state.model);
       }
 
       updateModelLabel();
     }
 
+    // Try token-first (same idea as cloud.html, but without the redirect).
     const token = localStorage.getItem(CORELYN_USER_TOKEN_KEY);
-
     if (token) {
       try {
         const apiKey = await fetchCorelynKeyFromToken(token);
