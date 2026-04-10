@@ -170,8 +170,12 @@ Respond in markdown.</textarea>
           <p style="font-size:13px;color:var(--text-dim);margin-top:4px;">
             Sign in with Google to generate a free Corelyn API key.
           </p>
-          <div id="authGoogleBtn"></div>
-          <div style="font-size:11px;color:var(--text-muted);margin-top:10px;">
+          <div id="authGoogleBtn" class="auth-google-btn-wrap auth-google-btn-disabled"></div>
+          <label class="auth-tos-checkbox-label">
+            <input type="checkbox" id="authTosCheckbox" />
+            <span>I agree to the <a href="https://tos.corelyn.ro/" target="_blank" class="auth-tos-link">Terms of Service</a></span>
+          </label>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">
             You can enter your own key anytime in Settings.
           </div>
         </div>
@@ -335,5 +339,3 @@ Respond in markdown.</textarea>
 </body>
 
 </html>
-
-

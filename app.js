@@ -281,6 +281,7 @@ const modelSelect = document.getElementById("modelSelect");
 // ── Corelyn Cloud Auth (Google -> auto-generate API key) ──
 const authModal = $('authModal');
 const closeAuthModalBtn = $('closeAuthModal');
+const authTosCheckbox = $('authTosCheckbox');
 const authAccountView = $('authAccountView');
 const authLoadingView = $('authLoadingView');
 const authErrorView = $('authErrorView');
@@ -802,6 +803,26 @@ function openGoogleForApiKey() {
     openAuthModal();
     showAuthView('account');
     initGoogleAuthButton();
+
+    // ToS checkbox gates the Google sign-in button
+    const tosAlreadyAgreed = localStorage.getItem('corelyn_tos_agreed') === 'true';
+    const googleBtnEl = authGoogleBtn;
+    function applyTosGate(agreed) {
+      if (!googleBtnEl) return;
+      googleBtnEl.style.opacity = agreed ? '1' : '0.35';
+      googleBtnEl.style.pointerEvents = agreed ? '' : 'none';
+      googleBtnEl.title = agreed ? '' : 'Please agree to the Terms of Service first';
+    }
+    if (authTosCheckbox) {
+      authTosCheckbox.checked = tosAlreadyAgreed;
+      applyTosGate(tosAlreadyAgreed);
+      authTosCheckbox.onchange = () => {
+        const agreed = authTosCheckbox.checked;
+        if (agreed) localStorage.setItem('corelyn_tos_agreed', 'true');
+        else localStorage.removeItem('corelyn_tos_agreed');
+        applyTosGate(agreed);
+      };
+    }
 
     // If user already has a token saved, we can skip the account view.
     const existingToken = localStorage.getItem(CORELYN_USER_TOKEN_KEY);

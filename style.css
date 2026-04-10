@@ -704,6 +704,32 @@ body { display: flex; height: 100vh; }
   border-color: rgba(255,95,95,0.55);
 }
 
+/* Auth modal — ToS checkbox */
+.auth-tos-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 10px;
+  user-select: none;
+}
+.auth-tos-checkbox-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.auth-tos-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+.auth-tos-link:hover {
+  text-decoration: underline;
+}
+
 .modal-body {
   display: flex;
   flex-direction: column;
@@ -1510,9 +1536,3 @@ body { display: flex; height: 100vh; }
 .pg-ai-send:disabled { background: var(--bg4); color: var(--text-muted); cursor: not-allowed; }
 
 .pg-ai-send:not(:disabled):hover { background: #9280ff; transform: scale(1.06); }
-
-
-
-
-
-
